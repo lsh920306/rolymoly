@@ -74,7 +74,7 @@ class AuctionHTTPTests(unittest.TestCase):
 
     def headers(self, token=None):
         return {"host": "auction.test", "origin": "https://auction.test", "content-type": "application/json",
-                "authorization": "Bearer " + (token or self.tokens[0]), http.EPOCH_HEADER: self.runtime.epoch}
+                http.SESSION_HEADER: token or self.tokens[0], http.EPOCH_HEADER: self.runtime.epoch}
 
     def request(self, body, *, token=None, headers=None, path="/api/auction/bid", method="POST"):
         return asyncio.run(call_asgi(self.app, body, headers or self.headers(token), path, method))
@@ -239,8 +239,9 @@ class AuctionHTTPTests(unittest.TestCase):
     def test_origin_epoch_token_body_limits_and_methods_fail_before_database(self):
         good = self.envelope()
         cases = [({**self.headers(), "origin": "https://evil.test"}, good, "POST", 403),
-                 ({k:v for k,v in self.headers().items() if k != "authorization"}, good, "POST", 401),
-                 ({**self.headers(), "authorization": "Bearer short"}, good, "POST", 401),
+                 ({k:v for k,v in self.headers().items() if k != http.SESSION_HEADER}, good, "POST", 401),
+                 ({**self.headers(), http.SESSION_HEADER: "short"}, good, "POST", 401),
+                 ({**self.headers(), http.SESSION_HEADER: "short", "authorization": "Bearer " + self.tokens[0]}, good, "POST", 401),
                  ({**self.headers(), http.EPOCH_HEADER: "wrong"}, good, "POST", 409),
                  (self.headers(), b" "*(http.MAX_BODY+1), "POST", 413),
                  (self.headers(), b"{invalid", "POST", 400),

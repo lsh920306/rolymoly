@@ -144,7 +144,8 @@ for(const cookie of ['other=private; _streamlit_xsrf='+cookieToken,'','_streamli
     assert.equal(call.options.headers['X-Xsrftoken'],expected);
     assert.equal(Object.hasOwn(call.options.headers,'X-Xsrftoken'),expected!==undefined);
     assert.equal(call.options.credentials,'same-origin');assert.equal(call.options.redirect,'error');
-    assert.equal(call.options.headers.Authorization,'Bearer '+token);
+    assert.equal(call.options.headers['X-Rolymoly-Session'],token);
+    assert.equal(call.options.headers.Authorization,undefined);
     assert.equal(call.options.headers['X-Rolymoly-Server-Epoch'],'server-one');
     assert.ok(call.url.startsWith('https://rolymoly-test.streamlit.app/~/+/api/auction/'));
     assert.ok(!call.url.includes(cookieToken));assert.ok(!call.options.body.includes(cookieToken));
@@ -240,7 +241,8 @@ assert.equal(delivery.stopped(),true);assert.equal(acks.length,0);
         self.run_js(r"""
 const first=delivery.send(request(1,command));const call=calls[0];
 assert.equal(call.url,'/api/auction/bid');assert.ok(!call.url.includes(token));assert.ok(!call.options.body.includes(token));
-assert.equal(call.options.headers.Authorization,'Bearer '+token);
+assert.equal(call.options.headers['X-Rolymoly-Session'],token);
+assert.equal(call.options.headers.Authorization,undefined);
 assert.equal(call.options.headers['X-Rolymoly-Server-Epoch'],'server-one');
 assert.equal(call.options.cache,'no-store');assert.equal(call.options.redirect,'error');
 respond(call,reply(call,{ack:{...command,status:'accepted'}}));await first;

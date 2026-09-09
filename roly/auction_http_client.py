@@ -60,7 +60,7 @@ export function createHttpDelivery({config,fetcher,readToken,onFrame,onAck,onErr
         const response=await fetcher(url,{
           method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',
           ...(typeof globalThis.AbortSignal?.timeout==='function'?{signal:globalThis.AbortSignal.timeout(10000)}:{}),
-          headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,
+          headers:{'Content-Type':'application/json','X-Rolymoly-Session':token,
                    'X-Rolymoly-Server-Epoch':config.epoch,...(xsrf?{'X-Xsrftoken':xsrf}:{})},
           body:JSON.stringify({...request,event_id:config.event_id,...(isBid?{confirm_only:confirmOnly}:{})})
         });

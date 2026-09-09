@@ -26,6 +26,7 @@ MAX_CONTEXTS = 128
 MAX_COMMANDS = 16384
 MAX_CONTEXT_COMMANDS = 8192
 EPOCH_HEADER = "X-Rolymoly-Server-Epoch"
+SESSION_HEADER = "X-Rolymoly-Session"
 _runtime = None
 _runtime_lock = threading.RLock()
 _logger = logging.getLogger(__name__)
@@ -234,10 +235,15 @@ def _credentials(request):
         raise TransportError("origin_rejected", "같은 사이트에서 다시 요청해 주세요.", 403)
     if request.headers.get("sec-fetch-site") not in (None, "same-origin"):
         raise TransportError("origin_rejected", "같은 사이트에서 다시 요청해 주세요.", 403)
-    value = request.headers.get("authorization", "")
-    if not value.startswith("Bearer ") or not 20 <= len(value[7:]) <= 256 or any(c.isspace() for c in value[7:]):
+    # Hosting gateways may consume Authorization for their own authentication.
+    # Use our app-specific header while keeping the same revocable Core session.
+    value = request.headers.get(SESSION_HEADER)
+    if value is None:
+        legacy = request.headers.get("authorization", "")
+        value = legacy[7:] if legacy.startswith("Bearer ") else ""
+    if not 20 <= len(value) <= 256 or any(c.isspace() for c in value):
         raise TransportError("login_required", "본인 계정으로 로그인해 주세요.", 401, reload=True)
-    return value[7:]
+    return value
 
 
 async def _body(request):
