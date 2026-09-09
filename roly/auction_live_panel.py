@@ -50,12 +50,14 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
     context, epoch:uuid(), sequence:0, outstanding:null, pending:validCommand(restored) ? {...restored} : null,
     sent:new Map(), lastReplySeq:0, lastContact:now(), nextAt:now(), timeouts:0,
     bestClock:null, message:'', messageStatus:'', messageLot:null, lastFrame:null,resolved:new Set(),metrics:{},
+    commandTiming:null,lastCommandTiming:null,commandRoundTripMs:null,
     save() { try { writePending(this.pending); } catch (_) {} },
     send(force=false) {
       if(this.outstanding && !force) return null;
       const request={context:this.context,epoch:this.epoch,seq:++this.sequence,sent_ms:now(),
         command:this.pending ? {...this.pending} : null};
       this.outstanding=request;
+      if(request.command && this.commandTiming?.request_id===request.command.request_id) this.commandTiming.attempts++;
       this.sent.set(request.seq,request);
       while(this.sent.size>32) this.sent.delete(this.sent.keys().next().value);
       emit(request);
@@ -64,6 +66,8 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
     submit(lot_id,amount) {
       if(this.pending || !integer(lot_id) || !integer(amount)) return null;
       this.pending={request_id:uuid(),lot_id,amount};
+      this.commandTiming={request_id:this.pending.request_id,lot_id,started:now(),attempts:0};
+      this.timeouts=0;
       this.message='';this.messageStatus='';this.save();
       // A user command takes priority over an outstanding read. It remains in
       // every following envelope until its own durable receipt is acknowledged.
@@ -81,6 +85,13 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
       if(this.pending && ack && ack.request_id===this.pending.request_id &&
          ack.lot_id===this.pending.lot_id && ack.amount===this.pending.amount) {
         if(ack.status==='accepted' || ack.status==='rejected') {
+          if(this.commandTiming?.request_id===ack.request_id) {
+            this.lastCommandTiming={...this.commandTiming,status:ack.status,elapsed_ms:Math.max(0,now()-this.commandTiming.started)};
+            // Learn only the original command's elapsed time. A retry's short
+            // round trip must not lower the budget for a new server write.
+            if(this.commandTiming.attempts===1) this.commandRoundTripMs=this.lastCommandTiming.elapsed_ms;
+            this.commandTiming=null;
+          }
           this.message=String(ack.message || (ack.status==='accepted' ? '입찰을 접수했습니다.' : '입찰이 접수되지 않았습니다.')).slice(0,500);
           this.messageStatus=ack.status==='accepted' ? 'success' : 'error';this.messageLot=ack.lot_id;
           this.resolved.add(this.pending.request_id);
@@ -96,14 +107,16 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
       const matched=Boolean(original && original.sent_ms===request.sent_ms);
       let fresh=true;
       if(matched) {
-        fresh=request.seq>=this.lastReplySeq;
+        fresh=!staleReply && request.seq>=this.lastReplySeq;
         if(fresh) {
           const received=now();
           const rtt=Math.max(0,received-original.sent_ms);
           const processing=finite(transport.server_elapsed_ms) ? Math.max(0,transport.server_elapsed_ms) : 0;
           const rendering=finite(transport.snapshot_elapsed_ms) ? Math.max(0,transport.snapshot_elapsed_ms) : 0;
           const residual=Math.max(0,rtt-processing-rendering);
-          this.metrics={round_trip_ms:rtt,server_elapsed_ms:processing,snapshot_elapsed_ms:rendering,residual_ms:residual};
+          this.metrics={round_trip_ms:rtt,server_elapsed_ms:processing,snapshot_elapsed_ms:rendering,residual_ms:residual,
+            callback_elapsed_ms:finite(transport.callback_elapsed_ms) ? Math.max(0,transport.callback_elapsed_ms) : null,
+            view_elapsed_ms:finite(transport.view_elapsed_ms) ? Math.max(0,transport.view_elapsed_ms) : null};
           if(finite(serverNow) && rtt<=30000 && processing+rendering<=rtt+100) {
             const sample={at:received,residual,offset:serverNow*1000+rendering+residual/2-received};
             if(!this.bestClock || received-this.bestClock.at>60000 || residual<=this.bestClock.residual) this.bestClock=sample;
@@ -112,7 +125,9 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
           this.lastContact=received;
           if(this.outstanding?.seq===request.seq) {
             this.outstanding=null;this.timeouts=0;
-            this.nextAt=received+(this.pending ? 1200 : 350);
+            // A slow read already paid the polling interval. Keep one request
+            // in flight, without adding another fixed delay after every reply.
+            this.nextAt=this.pending ? received+1200 : Math.max(received,original.sent_ms+500);
           }
         }
         this.sent.delete(request.seq);
@@ -128,7 +143,8 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
     pump(visible=true) {
       if(!visible) return null;
       if(this.outstanding) {
-        const limit=Math.min(10000,2000*(2**Math.min(this.timeouts,3)));
+        const initial=this.outstanding.command ? Math.min(5000,Math.max(3000,(this.commandRoundTripMs || 0)*1.5+500)) : 2000;
+        const limit=Math.min(10000,initial*(2**Math.min(this.timeouts,3)));
         if(now()-this.outstanding.sent_ms>=limit) { this.timeouts++;return this.send(true); }
       } else if(now()>=this.nextAt) return this.send();
       return null;
@@ -183,6 +199,16 @@ export default function({parentElement,data,setTriggerValue}) {
     memory.stageDispose?.();memory.stageDispose=null;
     const target=stageMount.querySelector('.auction-component');
     target.replaceChildren(make('div','live-unavailable',data.available ? '다음 선수를 준비하고 있습니다.' : '경매 연결을 확인하고 있습니다.'));
+  }
+  // Local monotonic stamps record when fresh server data actually reaches
+  // this DOM. They contain no account/session secrets and do not send events.
+  if(incoming.fresh && memory.stateAvailable) {
+    for(const [name,value] of [['Bid',stage?.bid_id],['Lot',memory.lot?.id]]) {
+      const key='display'+name+'Id', identity=value==null ? '' : String(value);
+      if(memory[key]!==identity) {memory[key]=identity;memory[key+'SeenAt']=now();}
+      root.dataset[key]=identity;
+      root.dataset['display'+name+'SeenAtMs']=String(memory[key+'SeenAt']);
+    }
   }
   const controls=root.querySelector('.live-bid-controls');
   if(!memory.nodes || memory.nodes.root!==controls) {
@@ -260,9 +286,16 @@ export default function({parentElement,data,setTriggerValue}) {
     root.dataset.roundTripMs=String(live.metrics.round_trip_ms ?? '');
     root.dataset.serverElapsedMs=String(live.metrics.server_elapsed_ms ?? '');
     root.dataset.snapshotElapsedMs=String(live.metrics.snapshot_elapsed_ms ?? '');
+    root.dataset.callbackElapsedMs=String(live.metrics.callback_elapsed_ms ?? '');
+    root.dataset.viewElapsedMs=String(live.metrics.view_elapsed_ms ?? '');
     root.dataset.serverNow=String(data.server_now ?? '');
     root.dataset.clientDraftChangeMs=String(memory.draftChangeMs ?? '');
     root.dataset.pollPending=String(Boolean(live.outstanding));
+    root.dataset.lastBidRequestId=live.lastCommandTiming?.request_id || '';
+    root.dataset.lastBidElapsedMs=String(live.lastCommandTiming?.elapsed_ms ?? '');
+    root.dataset.lastBidStatus=live.lastCommandTiming?.status || '';
+    root.dataset.lastBidAttempts=String(live.lastCommandTiming?.attempts ?? '');
+    root.dataset.clientTimeOriginMs=String(view.performance.timeOrigin ?? '');
   }
   const recordDraftChange=started=>{memory.draftChangeMs=now()-started;root.dataset.clientDraftChangeMs=String(memory.draftChangeMs);};
   const setDraft=value=>{const started=now();memory.draft=value;memory.edited=true;nodes.input.value=String(value);live.message='';live.messageStatus='';refresh();recordDraftChange(started);};
@@ -318,7 +351,8 @@ def live_panel_data(state, *, control=None, transport):
         "lot": {"id": lot["id"], "status": lot["status"], "highest_bid": lot.get("highest_bid")} if lot else None,
         "control": {name: control.get(name) for name in ("team_name", "remaining", "can_bid", "context")} if control else None,
         "transport": {name: transport.get(name) for name in (
-            "context", "frame_id", "request", "server_elapsed_ms", "snapshot_elapsed_ms", "ack")},
+            "context", "frame_id", "request", "server_elapsed_ms", "snapshot_elapsed_ms",
+            "callback_elapsed_ms", "view_elapsed_ms", "ack")},
     }
 
 

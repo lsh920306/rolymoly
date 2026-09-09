@@ -110,9 +110,10 @@ def _on_live_event(live, token, event_id, component_key, context):
         st.session_state[f"live_notice_{event_id}"] = {
             "success": ack["status"] == "accepted", "message": ack["message"],
             "lot_id": command["lot_id"], "token": token}
+    st.session_state[f"live_callback_elapsed_{event_id}"] = max(0, (monotonic() - started) * 1000)
 
 
-def _transport_frame(event_id, context, received_at):
+def _transport_frame(event_id, context, received_at, *, view_started_at=None):
     request = st.session_state.get(f"live_transport_request_{event_id}")
     if not request or request.get("context") != context:
         request = None
@@ -124,6 +125,8 @@ def _transport_frame(event_id, context, received_at):
     st.session_state[key] = st.session_state.get(key, 0) + 1
     return {"context": context, "frame_id": st.session_state[key], "request": request,
             "server_elapsed_ms": max(0, (received_at - started) * 1000) if request else 0,
+            "callback_elapsed_ms": st.session_state.get(f"live_callback_elapsed_{event_id}", 0) if request else 0,
+            "view_elapsed_ms": max(0, (received_at - view_started_at) * 1000) if view_started_at is not None else 0,
             "snapshot_elapsed_ms": max(0, (monotonic() - received_at) * 1000), "ack": ack}
 
 
@@ -448,13 +451,14 @@ def _render_live_auction(event_id, *, page_route=False):
             st.session_state.pop(saved_key, None)
     component_key = f"live_stage_{event_id}"
     on_event = lambda: _on_live_event(live, token, event_id, component_key, context)
+    view_started_at = monotonic()
     try:
         actor, state = live.get_view(token, event_id)
         view_received_at = monotonic()
     except sqlite3.Error:
         st.error("경매 상태를 불러오지 못했습니다. 연결이 회복되면 다시 확인합니다.")
         render_live_panel(None, key=component_key, control=None,
-                          transport=_transport_frame(event_id, context, monotonic()), on_event_change=on_event)
+                          transport=_transport_frame(event_id, context, monotonic(), view_started_at=view_started_at), on_event_change=on_event)
         return True  # Keep polling; a failed read is not an absent live session.
     if not state:
         if page_route:
@@ -593,7 +597,7 @@ def _render_live_auction(event_id, *, page_route=False):
                 control = {"team_name": own_team["name"], "remaining": own_team["remaining"],
                            "can_bid": can_bid, "context": context}
             render_live_panel(display_state, key=component_key, control=control,
-                              transport=_transport_frame(event_id, context, view_received_at), on_event_change=on_event)
+                              transport=_transport_frame(event_id, context, view_received_at, view_started_at=view_started_at), on_event_change=on_event)
             if own_team:
                 if len(own_team["players"]) >= 5:
                     st.caption("팀원 5명이 확정되어 입찰을 마쳤습니다.")
@@ -609,7 +613,7 @@ def _render_live_auction(event_id, *, page_route=False):
             st.caption("다음 경매 선수를 준비하고 있습니다.")
         if not lot or status == "COMPLETED":
             render_live_panel(display_state, key=component_key, control=None,
-                              transport=_transport_frame(event_id, context, view_received_at), on_event_change=on_event)
+                              transport=_transport_frame(event_id, context, view_received_at, view_started_at=view_started_at), on_event_change=on_event)
         render_remaining(state, key=f"live_remaining_{event_id}")
         lots = state.get("lots", [])
         progress = st.expander("경매 참가자 · 진행 현황", key=f"live_progress_{event_id}", on_change="rerun")

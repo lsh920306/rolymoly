@@ -309,16 +309,80 @@ class PostgresConnection:
     def _begin(self, *, writer):
         if self.in_transaction:
             raise sqlite3.ProgrammingError("이미 진행 중인 트랜잭션입니다.")
-        psycopg = _driver()
-        mode = "BEGIN ISOLATION LEVEL READ COMMITTED" if writer else "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
         with self._pipeline():
-            result = self._raw.execute(mode)
-            self._raw.execute(psycopg.sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(psycopg.sql.Identifier(self.schema)))
-            self._raw.execute("SET LOCAL lock_timeout = '15s'")
-            if writer:
-                self._raw.execute("SELECT pg_advisory_xact_lock(%s)", (advisory_key(self.schema),))
+            result = self._queue_begin(writer=writer)
         # Do not return before the pipeline has confirmed setup and the lock.
         return Cursor(result)
+
+    def _queue_begin(self, *, writer):
+        """Queue setup in order; the enclosing operation must synchronize it."""
+        psycopg = _driver()
+        mode = "BEGIN ISOLATION LEVEL READ COMMITTED" if writer else "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+        result = self._raw.execute(mode)
+        self._raw.execute(psycopg.sql.SQL("SET LOCAL search_path TO {}, pg_catalog").format(psycopg.sql.Identifier(self.schema)))
+        self._raw.execute("SET LOCAL lock_timeout = '15s'")
+        if writer:
+            self._raw.execute("SELECT pg_advisory_xact_lock(%s)", (advisory_key(self.schema),))
+        return result
+
+    def fetch_snapshot_batches(self, statements):
+        """Own one read-only snapshot, including its rollback, in one pipeline.
+
+        An external transaction is never adopted or ended. Validate every
+        SELECT before sending BEGIN; materialize results only after all SQL,
+        including ROLLBACK, has synchronized. Failed pipelines are rolled back
+        again outside the pipeline before the connection can be reused.
+        """
+        self._require_open()
+        if self.in_transaction:
+            raise sqlite3.ProgrammingError("독립 조회에는 사용 중이 아닌 연결이 필요합니다.")
+        prepared = [_batch_select(query, parameters) for query, parameters in statements]
+        if not prepared:
+            return []
+        try:
+            with self._pipeline():
+                self._queue_begin(writer=False)
+                cursors = [self._raw.execute(query, parameters) for query, parameters in prepared]
+                # execute queues SQL; Connection.rollback() would synchronize
+                # early and make a second network round trip.
+                self._raw.execute("ROLLBACK")
+            return [cursor.fetchall() for cursor in cursors]
+        except _driver().Error as error:
+            raise _database_error(error) from None
+        finally:
+            if self.in_transaction:
+                self.rollback()
+
+    def execute_batch(self, statements):
+        """Batch DML inside the caller's transaction without committing it.
+
+        Generated IDs are fetched after synchronization, so INSERT RETURNING
+        does not split the batch. A failure remains the caller's responsibility
+        to roll back, exactly as with execute(). No transaction control or DDL
+        can be embedded in this API.
+        """
+        self._require_open()
+        if not self.in_transaction:
+            raise sqlite3.ProgrammingError("변경 묶음에는 진행 중인 트랜잭션이 필요합니다.")
+        prepared = []
+        for query, parameters in statements:
+            if not isinstance(query, str):
+                raise TypeError("SQL은 문자열로 전달해 주세요.")
+            parts = list(_script_statements(query))
+            code = " ".join(text for kind, text in _regions(query) if kind == "code").lstrip()
+            if len(parts) != 1 or not re.match(r"(?:INSERT|UPDATE|DELETE)\b", code, re.IGNORECASE):
+                raise sqlite3.ProgrammingError("변경 묶음에는 INSERT/UPDATE/DELETE 한 문장씩만 사용할 수 있습니다.")
+            query, generated = _with_generated_id(parts[0])
+            prepared.append((_bind_query(query, parameters is not None), parameters, generated))
+        if not prepared:
+            return []
+        try:
+            with self._pipeline():
+                cursors = [(self._raw.execute(query, parameters), generated)
+                           for query, parameters, generated in prepared]
+            return [Cursor(cursor, generated_id=generated) for cursor, generated in cursors]
+        except _driver().Error as error:
+            raise _database_error(error) from None
 
     def fetch_batches(self, statements):
         """Fetch plain SELECTs together inside the caller's existing transaction.

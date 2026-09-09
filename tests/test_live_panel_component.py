@@ -77,20 +77,60 @@ for(let i=0;i<10;i++){clock+=100;channel.pump();}assert.equal(sent.length,1);
 clock=2000;const retry=channel.pump();assert.equal(sent.length,2);assert.equal(retry.command,null);
 clock=2200;channel.receive(frame(first),1001);assert.equal(channel.outstanding.seq,retry.seq,'old reply cannot acknowledge newer poll');
 clock=2300;channel.receive(frame(retry),1002);assert.equal(channel.outstanding,null);
-clock=2649;channel.pump();assert.equal(sent.length,2);
-clock=2650;channel.pump();assert.equal(sent.length,3);
+clock=2499;channel.pump();assert.equal(sent.length,2);
+clock=2500;channel.pump();assert.equal(sent.length,3);
 """)
 
     def test_lost_command_stays_in_following_envelopes_and_only_exact_receipt_clears(self):
         self.run_js(r"""
 const poll=channel.pump();clock=10;const bid=channel.submit(11,0);const command=bid.command;
 assert.equal(command.amount,0);assert.equal(sent.length,2);
-clock=2010;const retry=channel.pump();assert.deepEqual(retry.command,command);
+clock=2010;assert.equal(channel.pump(),null,'normal command latency must not trigger a two-second retry');
+clock=3010;const retry=channel.pump();assert.deepEqual(retry.command,command);
 channel.receive(frame(poll),1000);assert.deepEqual(channel.pending,command);
 channel.receive(frame(retry,{...command,status:'accepted',amount:1}),1002);assert.deepEqual(channel.pending,command);
 channel.receive(frame(retry,{...command,status:'pending'}),1002);assert.deepEqual(channel.pending,command);
 channel.receive(frame(retry,{...command,status:'accepted'}),1002);assert.equal(channel.pending,null);assert.equal(stored,null);
 channel.receive(frame(retry,{...command,status:'pending'}),1002);assert.equal(channel.pending,null,'late unknown reply must not revive an acknowledged bid');
+""")
+
+    def test_poll_cadence_includes_round_trip_and_never_overlaps_reads(self):
+        self.run_js(r"""
+const first=channel.pump();clock=900;assert.equal(channel.pump(),null);
+channel.receive(frame(first),1000);assert.equal(channel.nextAt,900);
+const next=channel.pump();assert.ok(next,'slow read must not add another 350ms');
+clock=1000;channel.receive(frame(next),1000.1);
+clock=1399;assert.equal(channel.pump(),null,'fast reads remain rate limited');
+clock=1400;assert.ok(channel.pump());assert.equal(channel.pump(),null);
+""")
+
+    def test_command_timing_survives_retries_and_does_not_learn_retry_rtt(self):
+        self.run_js(r"""
+const bid=channel.submit(11,10);clock=2200;assert.equal(channel.pump(),null);
+clock=2400;channel.receive(frame(bid,{...bid.command,status:'accepted'}),1002);
+assert.equal(channel.lastCommandTiming.elapsed_ms,2400);
+assert.equal(channel.lastCommandTiming.attempts,1);
+assert.equal(channel.commandRoundTripMs,2400);
+clock=2500;const second=channel.submit(11,20);
+clock=6500;assert.equal(channel.pump(),null,'learned command budget exceeds 3s');
+clock=6600;const retry=channel.pump();assert.deepEqual(retry.command,second.command);
+clock=6900;channel.receive(frame(retry,{...second.command,status:'rejected'}),1006);
+assert.equal(channel.lastCommandTiming.elapsed_ms,4400,'measure from original submit');
+assert.equal(channel.lastCommandTiming.attempts,2);
+assert.equal(channel.commandRoundTripMs,2400,'short retry must not replace original RTT');
+clock=7000;channel.receive(frame(retry,{...second.command,status:'rejected'}),1006);
+assert.equal(channel.lastCommandTiming.elapsed_ms,4400,'duplicate receipt must not move first confirmation');
+""")
+
+    def test_unknown_command_confirmation_retains_backoff_and_remount_has_no_fake_timing(self):
+        self.run_js(r"""
+const bid=channel.submit(11,10);clock=800;
+channel.receive(frame(bid,{...bid.command,status:'pending'}),1000);
+clock=1999;assert.equal(channel.pump(),null);
+clock=2000;const check=channel.pump();assert.deepEqual(check.command,bid.command);
+const remount=make();const replay=remount.pump();clock=2100;
+remount.receive(frame(replay,{...replay.command,status:'accepted'}),1001);
+assert.equal(remount.lastCommandTiming,null,'unknown original click time must remain unavailable');
 """)
 
     def test_unknown_receipt_survives_remount_and_other_context_never_inherits_it(self):
@@ -200,6 +240,25 @@ assert.equal(timers.size,timerCount);assert.equal(typeof add.onclick,'function')
 add.onclick();assert.equal(input.value,'10');
 cleanup();cleanup();assert.equal(timers.size,0);
 for(const values of listeners.values())assert.equal(values.size,0);
+""", dom=True)
+
+    def test_dom_delivery_metrics_preserve_first_seen_frame_and_exact_ack(self):
+        self.run_js(r"""
+add.onclick();submit.onclick();const bid=sent.at(-1);
+advance(1800);
+data={...data,lot:{...data.lot,highest_bid:10},stage:{...stage,bid_id:5},
+ transport:{...data.transport,frame_id:10,request:bid,ack:{...bid.command,status:'accepted'}}};
+cleanup=show();
+assert.equal(root.dataset.lastBidElapsedMs,'1800');
+assert.equal(root.dataset.lastBidAttempts,'1');
+assert.equal(root.dataset.lastBidStatus,'accepted');
+assert.equal(root.dataset.displayBidId,'5');
+assert.equal(root.dataset.displayBidSeenAtMs,'2000');
+advance(200);cleanup=show();
+assert.equal(root.dataset.displayBidSeenAtMs,'2000');
+data={...data,stage:{...stage,bid_id:4},transport:{...data.transport,frame_id:9}};
+cleanup=show();assert.equal(root.dataset.displayBidId,'5','older frames must not move display timing');
+assert.equal(root.dataset.lastBidElapsedMs,'1800');
 """, dom=True)
 
     def test_transport_projection_excludes_unrelated_secrets_and_renders_without_state(self):

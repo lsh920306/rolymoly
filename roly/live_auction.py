@@ -334,10 +334,23 @@ class LiveAuction:
             # Old saved reset_on_bid=False values do not disable this rule.
             # All validation and replay checks above run before this extension.
             deadline = min(lot["closes_at"] + BID_EXTENSION_SECONDS, stamp + _effective_bid_seconds(session["bid_seconds"]))
-            db.execute("UPDATE live_lots SET highest_team_id=?,highest_bid=?,closes_at=? WHERE id=?", (team["id"], amount, deadline, lot_id))
-            bid_id = db.execute("INSERT INTO live_bids(request_id,fingerprint,event_id,lot_id,team_id,account_id,member_id,amount,closes_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (request_id, fingerprint, event_id, lot_id, team["id"], actor["id"], actor["member_id"], amount, deadline, _iso(stamp))).lastrowid
-            db.execute("UPDATE live_sessions SET updated_at=? WHERE event_id=?", (_iso(stamp), event_id))
-            self._log(db, event_id, "BID", {"team_id": team["id"], "team_name": team["name"], "amount": amount}, stamp, actor, lot_id)
+            writes = [
+                ("UPDATE live_lots SET highest_team_id=?,highest_bid=?,closes_at=? WHERE id=?", (team["id"], amount, deadline, lot_id)),
+                ("INSERT INTO live_bids(request_id,fingerprint,event_id,lot_id,team_id,account_id,member_id,amount,closes_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)", (request_id, fingerprint, event_id, lot_id, team["id"], actor["id"], actor["member_id"], amount, deadline, _iso(stamp))),
+                ("UPDATE live_sessions SET updated_at=? WHERE event_id=?", (_iso(stamp), event_id)),
+            ]
+            detail = {"team_id": team["id"], "team_name": team["name"], "amount": amount}
+            if self.core.is_postgres:
+                writes.append(("INSERT INTO live_events(event_id,lot_id,actor_id,type,detail,created_at) VALUES(?,?,?,?,?,?)",
+                               (event_id, lot_id, actor["id"], "BID", json.dumps(detail, ensure_ascii=False), _iso(stamp))))
+                # No write depends on the generated bid ID. Retrieve it only
+                # after synchronization; Core.transaction still owns COMMIT.
+                bid_id = db.execute_batch(writes)[1].lastrowid
+            else:
+                db.execute(*writes[0])
+                bid_id = db.execute(*writes[1]).lastrowid
+                db.execute(*writes[2])
+                self._log(db, event_id, "BID", detail, stamp, actor, lot_id)
             return self._receipt({"id": bid_id, "event_id": event_id, "lot_id": lot_id,
                 "team_id": team["id"], "amount": amount, "closes_at": deadline,
                 "created_at": _iso(stamp)}, False)
@@ -804,9 +817,11 @@ class LiveAuction:
 
     def get_view(self, token, event_id):
         """Read identity and auction display from one consistent DB snapshot."""
-        with self.core.read_snapshot() as db:
+        reader = closing(self.core.connect()) if self.core.is_postgres else self.core.read_snapshot()
+        with reader as db:
             if self.core.is_postgres:
-                actor, state = self._fetch_view(event_id, db, actor_query=session_query(token) if token else None)
+                actor, state = self._fetch_view(event_id, db, actor_query=session_query(token) if token else None,
+                                                owned_snapshot=True)
             else:
                 actor = self.core.session(token, db)
                 state = self.get_state(event_id, conn=db)
@@ -860,7 +875,7 @@ class LiveAuction:
             self._account_for_read_close(state, read_finished)
         return state
 
-    def _fetch_view(self, event_id, db, *, actor_query=None):
+    def _fetch_view(self, event_id, db, *, actor_query=None, owned_snapshot=False):
         statements = self._view_statements(event_id)
         if actor_query is not None:
             statements.insert(0, actor_query)
@@ -869,8 +884,10 @@ class LiveAuction:
             # This is last so all display SELECTs precede its DB-clock
             # sample. No host wall clock participates in PG deadlines.
             statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", None))
-        batches = db.fetch_batches(statements) if self.core.is_postgres else [
-            db.execute(query, parameters).fetchall() for query, parameters in statements]
+        if self.core.is_postgres:
+            batches = db.fetch_snapshot_batches(statements) if owned_snapshot else db.fetch_batches(statements)
+        else:
+            batches = [db.execute(query, parameters).fetchall() for query, parameters in statements]
         received = time.monotonic()
         sampled_clock = float(batches.pop()[0][0]) if clock_in_batch else None
         actor_rows = batches.pop(0) if actor_query is not None else []

@@ -14,10 +14,24 @@ from tests import test_live_auction as fixtures
 
 class BatchedSQLite:
     """Exercise the PG batch contract with real local SQL and no driver/network."""
-    def __init__(self, connection, batches, after_actor=None):
+    def __init__(self, connection, batches, after_actor=None, on_close=None):
         self.connection = connection
         self.batches = batches
         self.after_actor = after_actor
+        self.on_close = on_close
+
+    def fetch_snapshot_batches(self, statements):
+        self.connection.execute("PRAGMA query_only=ON")
+        self.connection.execute("BEGIN")
+        try:
+            return self.fetch_batches(statements)
+        finally:
+            self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
+        if self.on_close:
+            self.on_close()
 
     def fetch_batches(self, statements):
         self.batches.append(statements)
@@ -48,7 +62,8 @@ class LiveViewReadTests(unittest.TestCase):
                 yield BatchedSQLite(db, batches, after_actor)
 
         facade = SimpleNamespace(is_postgres=True, db_path=self.core.db_path,
-                                 read_snapshot=snapshot)
+                                 read_snapshot=snapshot,
+                                 connect=lambda: BatchedSQLite(self.core.connect(), batches, after_actor))
         return LiveAuction(facade, self.comp), batches
 
     def cache(self, member_id):
@@ -92,7 +107,11 @@ class LiveViewReadTests(unittest.TestCase):
                 yield BatchedSQLite(db, [])
             virtual[0] += 2.0  # Deterministic synchronous pool-return delay.
 
-        facade = SimpleNamespace(is_postgres=True, db_path=self.core.db_path, read_snapshot=snapshot)
+        def closed():
+            virtual[0] += 2.0
+
+        facade = SimpleNamespace(is_postgres=True, db_path=self.core.db_path, read_snapshot=snapshot,
+                                 connect=lambda: BatchedSQLite(self.core.connect(), [], on_close=closed))
         live = LiveAuction(facade, self.comp)
         for status in ("RUNNING", "PAUSED", "WAITING"):
             with self.core.transaction() as db:

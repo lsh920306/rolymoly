@@ -27,6 +27,9 @@ class BatchedConnection:
         self.calls.append(query)
         return self.db.execute(query, parameters or ())
 
+    def execute_batch(self, statements):
+        return [self.execute(query, params) for query, params in statements]
+
     def fetch_batches(self, statements):
         # Apply the production batch guard, then exercise every SELECT against
         # the actual domain schema. Only PG's clock spelling needs translation.
@@ -174,7 +177,14 @@ class AuctionFastPathTests(unittest.TestCase):
     def test_pg_same_price_race_accepts_once_and_audit_failure_rolls_back(self):
         lot = self.start()
         live, _, _ = self.pg_bidder()
-        with patch.object(live, "_log", side_effect=sqlite3.OperationalError("synthetic audit failure")):
+        execute = BatchedConnection.execute
+
+        def fail_audit(connection, query, params=None):
+            if query.startswith("INSERT INTO live_events"):
+                raise sqlite3.OperationalError("synthetic audit failure")
+            return execute(connection, query, params)
+
+        with patch.object(BatchedConnection, "execute", fail_audit):
             with self.assertRaises(sqlite3.OperationalError):
                 live.place_bid(self.tokens[0], self.event, lot["id"], 10, str(uuid.uuid4()))
         state = self.live.get_state(self.event)
