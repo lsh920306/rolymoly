@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 
 from roly import auction_http as http
 from roly.auction_commands import context_id
@@ -129,17 +130,22 @@ class AuctionHTTPTests(unittest.TestCase):
         # avoiding its unrelated runtime startup, cookies, and private settings.
         with patch.object(st, "get_option", return_value="~/+") as option, \
                 patch.object(starlette_app.config, "_main_script_path", str(Path(__file__).resolve().parents[1] / "app.py")):
-            app = st.App(str(Path(__file__).resolve().parents[1] / "app.py"), routes=http.routes())
+            app = st.App(str(Path(__file__).resolve().parents[1] / "app.py"), routes=http.routes(),
+                         middleware=[Middleware(http.TransportDiagnostics)])
         option.assert_called_once_with("server.baseUrlPath")
         app._runtime = Mock()
         with patch.object(starlette_app, "create_streamlit_routes", return_value=create_streamlit_static_assets_routes("~/+")), \
                 patch.object(starlette_app, "create_streamlit_middleware", return_value=[]):
             self.app = app._build_starlette_app()
-        status, value, _ = self.request(self.envelope(), path="/~/+/api/auction/live")
-        self.assertEqual(status, 200)
-        self.assertIn("panel", value)
-        status, value, _ = self.request(self.envelope(lot), path="/~/+/api/auction/bid")
-        self.assertEqual((status, value["ack"]["status"], self.count_bids()), (200, "accepted", 1))
+        with self.assertLogs(http._logger, level="WARNING") as logs:
+            status, value, _ = self.request(self.envelope(), path="/~/+/api/auction/live")
+            self.assertEqual(status, 200)
+            self.assertIn("panel", value)
+            status, value, _ = self.request(self.envelope(lot), path="/~/+/api/auction/bid")
+            self.assertEqual((status, value["ack"]["status"], self.count_bids()), (200, "accepted", 1))
+            self.request(self.envelope(), path="/~/+/api/auction/live")
+        self.assertEqual(len(logs.output), 2)
+        self.assertNotIn(self.tokens[0], "\n".join(logs.output))
 
     def test_same_uuid_concurrency_reuses_terminal_and_does_not_extend_twice(self):
         lot = self.start(bid_seconds=10)

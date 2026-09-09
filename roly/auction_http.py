@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from hashlib import sha256
 import os
+import logging
 from pathlib import Path
 import threading
 from time import monotonic
@@ -27,6 +28,23 @@ MAX_CONTEXT_COMMANDS = 8192
 EPOCH_HEADER = "X-Rolymoly-Server-Epoch"
 _runtime = None
 _runtime_lock = threading.RLock()
+_logger = logging.getLogger(__name__)
+
+
+class TransportDiagnostics:
+    """Log startup/first delivery without recording credentials or payloads."""
+    def __init__(self, app):
+        self.app = app
+        self.seen = set()
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        endpoint = next((name for name in ("live", "bid") if path.endswith("/api/auction/" + name)), None)
+        if scope["type"] == "http" and endpoint and endpoint not in self.seen:
+            self.seen.add(endpoint)
+            _logger.warning("Auction HTTP first delivery: endpoint=%s method=%s root_path=%r",
+                            endpoint, scope.get("method"), str(scope.get("root_path", ""))[:128])
+        await self.app(scope, receive, send)
 
 
 class TransportError(Exception):
@@ -287,6 +305,7 @@ def routes(*, base_url=None):
                      or any(char in "?#{}\\" or char.isspace() or ord(char) < 32 for char in base_url)):
         raise ValueError("The auction API base path must be a literal URL path")
     prefix = "/" + base_url if base_url else ""
+    _logger.warning("Auction HTTP registered routes: base_path=%r", prefix)
     return [Route(prefix + "/api/auction/live", live_endpoint, methods=["POST"]),
             Route(prefix + "/api/auction/bid", bid_endpoint, methods=["POST"])]
 
@@ -311,6 +330,7 @@ async def lifespan(app):
         if _runtime is not None:
             raise RuntimeError("Auction HTTP lifetime already active")
         _runtime = runtime
+    _logger.warning("Auction HTTP startup ready: enabled=%s", runtime is not None)
     try:
         yield
     finally:
