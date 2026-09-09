@@ -59,7 +59,7 @@ class ServerLauncherTests(unittest.TestCase):
     def test_restart_settles_persisted_bid_before_any_browser_and_returns_child_code(self):
         def fake_streamlit_process(command, cwd, env=None):
             self.assertEqual(command[1:4], ["-m", "streamlit", "run"])
-            self.assertEqual(Path(command[4]).name, "app.py")
+            self.assertEqual(Path(command[4]).name, "streamlit_app.py")
             self.assertEqual(command[5:], ["--server.headless=true"])
             self.assertEqual(Path(cwd), Path(__file__).resolve().parents[1])
             worker = LiveAuction._workers[self.core.db_path]["thread"]

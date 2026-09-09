@@ -30,6 +30,10 @@ class BatchedConnection:
     def execute_batch(self, statements):
         return [self.execute(query, params) for query, params in statements]
 
+    def begin_writer_batches(self, statements):
+        self.execute("BEGIN IMMEDIATE")
+        return self.fetch_batches(statements)
+
     def fetch_batches(self, statements):
         # Apply the production batch guard, then exercise every SELECT against
         # the actual domain schema. Only PG's clock spelling needs translation.
@@ -57,13 +61,11 @@ class AuctionFastPathTests(unittest.TestCase):
     def pg_bidder(self, before_clock=None):
         calls, batches = [], []
 
-        @contextmanager
-        def transaction():
-            with self.core.transaction() as db:
-                yield BatchedConnection(db, self.clock, calls, batches, before_clock)
+        def connect():
+            return BatchedConnection(self.core.connect(), self.clock, calls, batches, before_clock)
 
         facade = SimpleNamespace(is_postgres=True, db_path=self.core.db_path,
-                                 transaction=transaction, session=self.core.session)
+                                 connect=connect, session=self.core.session)
         return LiveAuction(facade, self.comp), calls, batches
 
     def test_idle_ready_running_paused_and_unsold_workers_never_take_writer_lock(self):
@@ -130,9 +132,9 @@ class AuctionFastPathTests(unittest.TestCase):
             receipt = live.place_bid(self.tokens[0], self.event, lot["id"], 10, request_id)
         self.assertEqual(receipt["closes_at"], lot["closes_at"] + 5)
         self.assertEqual(len(batches), 1)
-        self.assertEqual(len(batches[0]), 8)
+        self.assertEqual(len(batches[0]), 9)
         self.assertEqual(batches[0][-1][0], CLOCK_QUERY)
-        self.assertEqual(sum(query.lstrip().upper().startswith("SELECT") for query in calls), 1)
+        self.assertEqual(sum(query.lstrip().upper().startswith("SELECT") for query in calls), 0)
         self.assertEqual(sum(query.lstrip().upper().startswith(("UPDATE", "INSERT")) for query in calls), 4)
         self.live.pause(self.admin, self.event)
         self.clock.advance(100)
@@ -171,7 +173,8 @@ class AuctionFastPathTests(unittest.TestCase):
         batch_count = len(batches)
         with self.assertRaises(PermissionError):
             live.place_bid(self.tokens[0], self.event, lot["id"], 10, str(uuid.uuid4()))
-        self.assertEqual(len(batches), batch_count)
+        self.assertEqual(len(batches), batch_count + 1)
+        self.assertFalse(any(query.lstrip().upper().startswith(("UPDATE", "INSERT")) for query in calls))
         self.assertFalse(self.live.get_state(self.event)["bids"])
 
     def test_pg_same_price_race_accepts_once_and_audit_failure_rolls_back(self):

@@ -353,6 +353,32 @@ class PostgresConnection:
             if self.in_transaction:
                 self.rollback()
 
+    def begin_writer_batches(self, statements):
+        """Acquire the writer lock and read validation data in one pipeline.
+
+        This explicitly starts a new transaction; it never adopts an external
+        one. The lock precedes every SELECT, and the caller owns subsequent
+        validation, writes and COMMIT. Failed setup/reads are rolled back before
+        returning control, including errors surfaced at pipeline synchronization.
+        """
+        self._require_open()
+        if self.in_transaction:
+            raise sqlite3.ProgrammingError("독립 쓰기 조회에는 사용 중이 아닌 연결이 필요합니다.")
+        prepared = [_batch_select(query, parameters) for query, parameters in statements]
+        if not prepared:
+            raise sqlite3.ProgrammingError("쓰기 검증 조회가 필요합니다.")
+        try:
+            with self._pipeline():
+                self._queue_begin(writer=True)
+                cursors = [self._raw.execute(query, parameters) for query, parameters in prepared]
+            return [cursor.fetchall() for cursor in cursors]
+        except _driver().Error as error:
+            self.rollback()
+            raise _database_error(error) from None
+        except BaseException:
+            self.rollback()
+            raise
+
     def execute_batch(self, statements):
         """Batch DML inside the caller's transaction without committing it.
 

@@ -23,7 +23,7 @@ def main():
     child_environment["ROLYMOLY_DATA_DIR"] = str(data_root)
     child_environment["ROLYMOLY_DATABASE_TARGET"] = target
     try:
-        return subprocess.call([sys.executable, "-m", "streamlit", "run", str(root / "app.py"), *sys.argv[1:]], cwd=root, env=child_environment)
+        return subprocess.call([sys.executable, "-m", "streamlit", "run", str(root / "streamlit_app.py"), *sys.argv[1:]], cwd=root, env=child_environment)
     except KeyboardInterrupt:
         return 0
     finally:

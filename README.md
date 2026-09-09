@@ -24,11 +24,13 @@
 .\.venv\Scripts\python.exe -m roly.server
 ```
 
-실행기는 서버의 경매 마감 처리 작업을 먼저 시작하고 `app.py`를 실행합니다. 화면만 직접 실행하려면 아래 명령을 사용할 수 있습니다. 실제 경매 운영에는 위 실행기를 사용하세요.
+실행기는 서버의 경매 마감 처리 작업을 먼저 시작하고 `streamlit_app.py`의 ASGI 서버를 실행합니다. 이 서버는 `app.py` 화면과 같은 출처의 입찰·관전 HTTP 경로를 함께 제공합니다. 입찰 접수 결과는 화면 재실행을 기다리지 않고 반환하며, 관전 조회는 별도로 진행합니다. 화면만 직접 실행하려면 아래 명령을 사용할 수 있습니다. 실제 경매 운영에는 위 실행기를 사용하세요.
 
 ```powershell
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
+
+Community Cloud의 시작 파일은 `streamlit_app.py`를 유지합니다. 기존 일반 스크립트에서 ASGI 방식으로 변경하는 첫 배포에는 관리 화면의 **Reboot**로 서버를 재시작해야 합니다. 실제 배포와 응답 시간 검증 결과는 [전체 구현 보고서](docs/ROLYMOLY_IMPLEMENTATION_REPORT.md)에 구분해 기록합니다.
 
 새 PC와 Community Cloud는 검증한 **Python 3.11**에 맞춥니다. 새 PC에서는 다음 명령을 사용합니다.
 

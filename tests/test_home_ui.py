@@ -69,7 +69,7 @@ class HomeUITests(unittest.TestCase):
         self.at.switch_page("app_pages/home.py").run()
         self.assert_clean()
         self.assertEqual([tab.label for tab in self.at.tabs], ["일반 내전", "경매 내전"])
-        self.assertNotIn("home_create_auction", [button.key for button in self.at.button])
+        self.assertEqual(self.at.button(key="home_create_auction").label, "경매 내전 만들기")
         self.assertFalse(any("클랜원과 함께할 경매" in item.value for item in self.at.markdown))
         self.assertFalse(self.at.get("dialog"))
         self.assertEqual({key: self.at.session_state[key] for key in identity}, identity)
@@ -245,6 +245,68 @@ class HomeUITests(unittest.TestCase):
         self.at.switch_page("app_pages/members.py").run()
         self.at.switch_page("app_pages/home.py").run()
         self.assertIn("수정된 클랜", [item.value for item in self.at.subheader])
+
+    def test_creation_buttons_open_existing_forms_without_creating_events(self):
+        from uuid import uuid4
+        receipt = self.core.register_member("lounge-member", "synthetic-lounge-password", "라운지개설#QA", "TOP", "JG", request_key=str(uuid4()))
+        self.core.approve_member(self.token, receipt["member_id"], 200)
+        self.at.session_state["token"] = self.core.login("lounge-member", "synthetic-lounge-password")
+        identity = {key: self.at.session_state[key] for key in ("db_path", "demo_id", "token")}
+        events_before = self.comp.list_events()
+        self.at.run()
+        self.assert_clean()
+        self.assertEqual(self.core.session(identity["token"])["role"], "member")
+        normal_button = self.at.button(key="home_create_normal")
+        auction_button = self.at.button(key="home_create_auction")
+        self.assertFalse(normal_button.disabled)
+        self.assertFalse(auction_button.disabled)
+        self.assertEqual((normal_button.proto.type, auction_button.proto.type), ("primary", "primary"))
+        self.at.session_state["focus_event"] = events_before[0]["id"]
+        normal_button.click().run()
+        self.assert_clean()
+        self.assertEqual(self.at.title[0].value, "일반내전")
+        self.assertTrue(any(item.label == "내전 이름" for item in self.at.text_input))
+        self.assertNotIn("focus_event", self.at.session_state)
+        self.at.switch_page("app_pages/home.py").run()
+        self.at.session_state["home_dialog"] = ("profile", None)
+        self.at.session_state["t_preparation_dialog"] = ("participants", events_before[0]["id"])
+        self.at.button(key="home_create_auction").click().run()
+        self.assert_clean()
+        self.assertTrue(self.at.get("dialog"))
+        self.assertTrue(any(item.label == "경매 생성" for item in self.at.button))
+        self.assertNotIn("t_preparation_dialog", self.at.session_state)
+        self.assertNotIn("home_dialog", self.at.session_state)
+        self.assertEqual({key: self.at.session_state[key] for key in identity}, identity)
+        self.assertEqual(self.comp.list_events(), events_before)
+
+    def test_creation_buttons_disable_for_guest_pending_and_revoked_sessions(self):
+        from uuid import uuid4
+        receipt = self.core.register_member("lounge-pending", "synthetic-lounge-password", "라운지대기#QA", "TOP", "JG", request_key=str(uuid4()))
+        pending_token = self.core.login("lounge-pending", "synthetic-lounge-password")
+        events_before = self.comp.list_events()
+        for token in (None, pending_token):
+            with self.subTest(token_kind="guest" if token is None else "pending"):
+                self.at.session_state["token"] = token
+                self.at.run()
+                self.assert_clean()
+                if token is None:
+                    for key in ("home_create_normal", "home_create_auction"):
+                        self.assertTrue(self.at.button(key=key).disabled)
+                else:
+                    self.assertTrue(any("가입 승인 후 이용할 수 있습니다" in item.value for item in self.at.info))
+                    self.assertFalse(any((button.key or "").startswith("home_create_") for button in self.at.button))
+                self.assertFalse(self.at.get("dialog"))
+        self.core.approve_member(self.token, receipt["member_id"], 200)
+        self.at.session_state["token"] = pending_token
+        self.at.run()
+        self.assertFalse(self.at.button(key="home_create_normal").disabled)
+        self.core.logout(pending_token)
+        self.at.button(key="home_create_auction").click().run()
+        self.assert_clean()
+        self.assertEqual(self.at.title[0].value, "라운지")
+        self.assertFalse(self.at.get("dialog"))
+        self.assertTrue(self.at.button(key="home_create_auction").disabled)
+        self.assertEqual(self.comp.list_events(), events_before)
 
 
 if __name__ == "__main__":

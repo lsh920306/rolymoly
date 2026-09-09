@@ -70,6 +70,77 @@ class LivePanelComponentTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_http_panel_acknowledges_without_a_streamlit_rerun(self):
+        self.run_js(r"""
+cleanup();delete parent._rolyLivePanel;sent.length=0;
+const network=[];
+globalThis.fetch=(url,options)=>new Promise(resolve=>network.push({url,options,resolve}));
+storage.set('login-key','test-token-with-at-least-twenty-characters');
+data={...data,direct:{live_url:'/api/auction/live',bid_url:'/api/auction/bid',epoch:'server-one',event_id:3,storage_key:'login-key'},
+ transport:{context:'account-event',frame_id:0,request:null}};
+cleanup=show();assert.equal(sent.length,0);assert.equal(network.length,1);
+const polling=JSON.parse(network[0].options.body);
+clock+=100;
+network[0].resolve({ok:true,json:async()=>({context:'account-event',epoch:'server-one',panel:{...data,
+ server_now:1000.2,transport:{context:'account-event',request:polling,server_elapsed_ms:30}}})});
+await new Promise(setImmediate);
+assert.equal(root.dataset.deliveryMode,'http');assert.equal(root.dataset.clockCalibrated,'true');
+const amount=controls.querySelector('.bid-amount');
+amount.value='10';amount.oninput();controls.querySelector('.bid-submit').onclick();
+assert.equal(network.length,2);assert.equal(sent.length,0);
+const bidding=JSON.parse(network[1].options.body);assert.equal(bidding.confirm_only,false);
+clock+=120;
+network[1].resolve({ok:true,json:async()=>({context:'account-event',epoch:'server-one',request:bidding,
+ server_elapsed_ms:70,ack:{...bidding.command,status:'accepted',message:'Accepted'}})});
+await new Promise(setImmediate);
+assert.equal(root.dataset.lastBidStatus,'accepted');assert.equal(root.dataset.pendingRequest,'');
+assert.equal(root.dataset.lastBidElapsedMs,'120');assert.equal(sent.length,0);
+assert.equal(controls.querySelector('.bid-feedback').textContent,'Accepted');
+cleanup();
+""", dom=True)
+
+    def test_http_ack_retires_newer_confirmation_for_same_uuid(self):
+        self.run_js(r"""
+const first=channel.submit(11,10);clock=3500;const retry=channel.pump();
+assert.equal(retry.command.request_id,first.command.request_id);
+clock=3600;channel.receiveAck({...frame(first,{...first.command,status:'accepted'}),frame_id:undefined});
+assert.equal(channel.pending,null);assert.equal(channel.outstanding,null);
+const next=channel.pump();assert.equal(next.command,null);
+""")
+
+    def test_http_reads_continue_while_bid_is_pending_and_ack_is_not_clock_sample(self):
+        self.run_js(r"""
+const independent=createLiveChannel({context:'account-event',now:()=>clock,uuid,emit:v=>sent.push(v),
+ readPending:()=>null,writePending:()=>{},independentReads:true,pollInterval:250});
+const read=independent.pump();clock=100;independent.receive(frame(read),1000);
+const contact=independent.lastContact,anchor=independent.bestClock;
+const bid=independent.submit(11,10);
+clock=260;const whilePending=independent.pump();
+assert.equal(whilePending.command,null);assert.ok(independent.pending);
+clock=300;independent.receiveAck({context:'account-event',request:bid,ack:{...bid.command,status:'accepted'},server_elapsed_ms:50});
+assert.equal(independent.lastContact,contact);assert.equal(independent.bestClock,anchor);
+assert.equal(independent.outstanding.seq,whilePending.seq);assert.equal(independent.pending,null);
+clock=350;independent.receive(frame(whilePending),1000.25);
+assert.equal(independent.lastContact,350);
+""")
+
+    def test_http_final_cleanup_prevents_late_reply_from_remounting(self):
+        self.run_js(r"""
+cleanup();delete parent._rolyLivePanel;
+const network=[];
+globalThis.fetch=(url,options)=>new Promise(resolve=>network.push({options,resolve}));
+storage.set('login-key','test-token-with-at-least-twenty-characters');
+data={...data,direct:{live_url:'/api/auction/live',bid_url:'/api/auction/bid',epoch:'server-one',event_id:3,storage_key:'login-key'},
+ transport:{context:'account-event',frame_id:0,request:null}};
+const dispose=show();dispose();
+assert.equal(timers.size,0);
+const httpRequest=JSON.parse(network[0].options.body);
+network[0].resolve({ok:true,json:async()=>({context:'account-event',epoch:'server-one',panel:{...data,
+ transport:{context:'account-event',request:httpRequest,server_elapsed_ms:0}}})});
+await new Promise(setImmediate);
+assert.equal(timers.size,0);assert.equal(parent._rolyLivePanel.mounted,false);
+""", dom=True)
+
     def test_ack_driven_poll_has_one_outstanding_request_and_recovers_timeout(self):
         self.run_js(r"""
 const first=channel.pump();assert.equal(sent.length,1);

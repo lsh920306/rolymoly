@@ -6,7 +6,7 @@ or opening another browser never creates a second sale.
 """
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, contextmanager
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -215,6 +215,10 @@ class LiveAuction:
 
     def _bid_actor(self, db, token):
         actor = self.core.session(token, db)
+        return self._validate_bid_actor(actor)
+
+    @staticmethod
+    def _validate_bid_actor(actor):
         if not actor or actor["member_id"] is None:
             raise PermissionError("승인 회원과 연결된 팀장 계정으로 로그인해 주세요.")
         # The fresh session query already joins this member inside the writer
@@ -241,18 +245,48 @@ class LiveAuction:
         if amount > team["budget"] - spent:
             raise ValueError("팀의 남은 예산을 초과했습니다.")
 
-    def _bid_snapshot(self, db, token, event_id, lot_id, request_id):
-        """Batch independent validation reads under the existing writer lock.
+    @contextmanager
+    def _bid_transaction(self, token, event_id, lot_id, request_id, *, receipt_only=False):
+        if not self.core.is_postgres:
+            with self.core.transaction() as db:
+                yield db, None
+            return
+        # This method owns the connection just as Core.transaction does. The
+        # explicit adapter API starts BEGIN + lock + reads without an earlier
+        # synchronization. Never commit before Python validation and all writes.
+        with closing(self.core.connect()) as db:
+            try:
+                snapshot = self._bid_snapshot(db, token, event_id, lot_id, request_id,
+                                              receipt_only=receipt_only)
+                yield db, snapshot
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
 
-        Authentication is checked first and is never cached. No decision uses
-        the returned clock until the complete batch has synchronized. Replays
-        still precede current-lot checks, and all writes retain their original
-        transaction and error handling.
+    def _bid_snapshot(self, db, token, event_id, lot_id, request_id, *, receipt_only=False):
+        """Read fresh authorization and validation after the writer lock.
+
+        Team lookup uses the same token's account in SQL, removing the need to
+        wait for an actor ID before queuing reads. Authenticate before using any
+        returned data. The final DB clock and receipts keep their original
+        authority; no display cache or pre-lock timestamp participates.
         """
-        actor = self._bid_actor(db, token)
+        if not token:
+            self._validate_bid_actor(None)
+        actor_query = session_query(token)
+        token_hash = actor_query[1][0]
         statements = [
-            ("SELECT t.* FROM competition_teams t JOIN competition_players p ON p.event_id=t.event_id AND p.member_id=t.captain_id WHERE t.event_id=? AND t.captain_id=? AND p.participation_status='SELECTED' AND p.team_id=t.id", (event_id, actor["member_id"])),
+            actor_query,
+            ("""SELECT t.* FROM competition_teams t
+                JOIN competition_players p ON p.event_id=t.event_id AND p.member_id=t.captain_id
+                JOIN accounts a ON a.member_id=t.captain_id JOIN sessions s ON s.account_id=a.id
+                WHERE t.event_id=? AND s.token_hash=?
+                AND p.participation_status='SELECTED' AND p.team_id=t.id""", (event_id, token_hash)),
             ("SELECT * FROM live_bids WHERE request_id=?", (request_id,)),
+        ]
+        if not receipt_only:
+            statements.extend([
             ("SELECT * FROM live_sessions WHERE event_id=?", (event_id,)),
             ("SELECT status FROM competition_events WHERE id=?", (event_id,)),
             ("SELECT * FROM live_lots WHERE id=? AND event_id=?", (lot_id, event_id)),
@@ -262,22 +296,32 @@ class LiveAuction:
                 WHERE l.id=? AND l.event_id=?""", (lot_id, event_id)),
             ("""SELECT p.team_id,p.price FROM competition_players p
                 JOIN competition_teams t ON t.id=p.team_id
-                WHERE t.event_id=? AND t.captain_id=?""", (event_id, actor["member_id"])),
-        ]
-        if not self._injected_clock:
-            statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", None))
-        batches = db.fetch_batches(statements)
-        stamp = self._clock() if self._injected_clock else float(batches.pop()[0][0])
-        teams, receipts, sessions, events, lots, players, roster = batches
+                JOIN accounts a ON a.member_id=t.captain_id JOIN sessions s ON s.account_id=a.id
+                WHERE t.event_id=? AND s.token_hash=?""", (event_id, token_hash)),
+            ])
+            if not self._injected_clock:
+                statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", None))
+        batches = db.begin_writer_batches(statements)
+        actor_rows, teams, receipts = batches[:3]
+        actor = self._validate_bid_actor(dict(actor_rows[0]) if actor_rows else None)
+        # The bound session cutoff was prepared before a possibly long lock
+        # wait. Recheck expiry after synchronization, retaining Core.session's
+        # UTC timestamp semantics without an extra authentication round trip.
+        if actor["expires_at"] <= datetime.now(timezone.utc).isoformat():
+            self._validate_bid_actor(None)
         if len(teams) != 1:
             raise PermissionError("이 대회의 팀장만 본인 팀으로 입찰할 수 있습니다.")
         team = dict(teams[0])
-        roster = [row for row in roster if row["team_id"] == team["id"]]
         first = lambda rows: dict(rows[0]) if rows else None
-        return {"actor": actor, "team": team, "receipt": first(receipts),
-                "session": first(sessions), "event": first(events), "lot": first(lots),
-                "player": first(players), "count": len(roster),
-                "spent": sum(row["price"] for row in roster), "stamp": stamp}
+        result = {"actor": actor, "team": team, "receipt": first(receipts)}
+        if not receipt_only:
+            stamp = self._clock() if self._injected_clock else float(batches.pop()[0][0])
+            sessions, events, lots, players, roster = batches[3:]
+            roster = [row for row in roster if row["team_id"] == team["id"]]
+            result.update(session=first(sessions), event=first(events), lot=first(lots),
+                          player=first(players), count=len(roster),
+                          spent=sum(row["price"] for row in roster), stamp=stamp)
+        return result
 
     @staticmethod
     def _receipt(row, replayed):
@@ -294,8 +338,7 @@ class LiveAuction:
             request_id = str(uuid.UUID(str(request_id)))
         except (ValueError, AttributeError) as exc:
             raise ValueError("유효한 입찰 요청 번호(UUID)가 필요합니다.") from exc
-        with self.core.transaction() as db:
-            snapshot = self._bid_snapshot(db, token, event_id, lot_id, request_id) if self.core.is_postgres else None
+        with self._bid_transaction(token, event_id, lot_id, request_id) as (db, snapshot):
             actor, team = (snapshot["actor"], snapshot["team"]) if snapshot is not None else self._bidder(db, token, event_id)
             payload = [event_id, lot_id, amount, actor["id"], actor["member_id"], team["id"]]
             fingerprint = hashlib.sha256(json.dumps(payload).encode()).hexdigest()
@@ -344,7 +387,7 @@ class LiveAuction:
                 writes.append(("INSERT INTO live_events(event_id,lot_id,actor_id,type,detail,created_at) VALUES(?,?,?,?,?,?)",
                                (event_id, lot_id, actor["id"], "BID", json.dumps(detail, ensure_ascii=False), _iso(stamp))))
                 # No write depends on the generated bid ID. Retrieve it only
-                # after synchronization; Core.transaction still owns COMMIT.
+                # after synchronization; _bid_transaction still owns COMMIT.
                 bid_id = db.execute_batch(writes)[1].lastrowid
             else:
                 db.execute(*writes[0])
@@ -367,9 +410,9 @@ class LiveAuction:
             request_id = str(uuid.UUID(str(request_id)))
         except (ValueError, AttributeError) as exc:
             raise ValueError("유효한 입찰 요청 번호(UUID)가 필요합니다.") from exc
-        with self.core.transaction() as db:
-            actor, team = self._bidder(db, token, event_id)
-            row = db.execute("SELECT * FROM live_bids WHERE request_id=?", (request_id,)).fetchone()
+        with self._bid_transaction(token, event_id, lot_id, request_id, receipt_only=True) as (db, snapshot):
+            actor, team = (snapshot["actor"], snapshot["team"]) if snapshot is not None else self._bidder(db, token, event_id)
+            row = snapshot["receipt"] if snapshot is not None else db.execute("SELECT * FROM live_bids WHERE request_id=?", (request_id,)).fetchone()
             if row is None:
                 return None
             fingerprint = hashlib.sha256(json.dumps(
@@ -438,20 +481,41 @@ class LiveAuction:
             return self._open_next(db, session, stamp)
         return False
 
+    def _worker_read(self, query, parameters=None):
+        # Two independent lifecycle reads retain their existing ordering. Each
+        # owns one short read-only pipeline instead of BEGIN/SELECT/close trips.
+        if self.core.is_postgres:
+            with closing(self.core.connect()) as db:
+                return db.fetch_snapshot_batches([(query, parameters)])[0]
+        with self.core.read_snapshot() as db:
+            return db.execute(query, parameters or ()).fetchall()
+
     def _due_candidates(self):
         """Skip idle writer transactions; these IDs are hints, never authority."""
-        with self.core.read_snapshot() as db:
-            database_clock = self.core.is_postgres and not self._injected_clock
-            clock_sql = "EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision" if database_clock else "?"
-            parameters = None if database_clock else (self._clock(),)
-            return [row[0] for row in db.execute(f"""SELECT s.event_id
+        if self.core.is_postgres:
+            statements = [("""SELECT s.event_id,s.status,e.status AS event_status,l.closes_at,s.next_at
                 FROM live_sessions s JOIN competition_events e ON e.id=s.event_id
                 LEFT JOIN live_lots l ON l.id=s.current_lot_id AND l.event_id=s.event_id
-                CROSS JOIN (SELECT {clock_sql} AS stamp) c
+                WHERE s.status IN ('READY','RUNNING','WAITING','PAUSED') AND (
+                    e.status='CANCELLED' OR (e.status='AUCTION' AND (
+                        (s.status='RUNNING' AND l.closes_at IS NOT NULL) OR
+                        (s.status='WAITING' AND s.next_at IS NOT NULL))))""", None)]
+            if not self._injected_clock:
+                statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", None))
+            with closing(self.core.connect()) as db:
+                batches = db.fetch_snapshot_batches(statements)
+            stamp = self._clock() if self._injected_clock else float(batches[1][0][0])
+            return [row["event_id"] for row in batches[0] if row["event_status"] == "CANCELLED"
+                    or (row["status"] == "RUNNING" and row["closes_at"] <= stamp)
+                    or (row["status"] == "WAITING" and row["next_at"] <= stamp)]
+        return [row[0] for row in self._worker_read("""SELECT s.event_id
+                FROM live_sessions s JOIN competition_events e ON e.id=s.event_id
+                LEFT JOIN live_lots l ON l.id=s.current_lot_id AND l.event_id=s.event_id
+                CROSS JOIN (SELECT ? AS stamp) c
                 WHERE s.status IN ('READY','RUNNING','WAITING','PAUSED') AND (
                     e.status='CANCELLED' OR (e.status='AUCTION' AND (
                         (s.status='RUNNING' AND l.closes_at<=c.stamp) OR
-                        (s.status='WAITING' AND s.next_at<=c.stamp))))""", parameters)]
+                        (s.status='WAITING' AND s.next_at<=c.stamp))))""", (self._clock(),))]
 
     def settle_due(self):
         """Apply only server-determined deadlines; callers cannot select a winner."""
@@ -945,8 +1009,7 @@ class LiveAuction:
         return actor, result
 
     def has_active_sessions(self):
-        with closing(self.core.connect()) as db:
-            return bool(db.execute("SELECT 1 FROM live_sessions WHERE status IN ('READY','RUNNING','WAITING','PAUSED')").fetchone())
+        return bool(self._worker_read("SELECT 1 FROM live_sessions WHERE status IN ('READY','RUNNING','WAITING','PAUSED') LIMIT 1"))
 
     def _worker_error(self):
         with self._worker_lock:

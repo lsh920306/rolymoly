@@ -4,7 +4,7 @@ from datetime import datetime
 import streamlit as st
 
 from roly.ui import context, lounge_service, ROOT, FORMATS, KINDS, STATUS
-from roly.lounge_ui import KST, WEEKDAYS, local_time, time_label, profile_dialog
+from roly.lounge_ui import KST, WEEKDAYS, local_time, time_label, profile_dialog, creation_actions
 from roly.member_profile_page import open_member_profile
 from roly.member_cards import render_member_cards
 
@@ -54,6 +54,8 @@ with st.container(horizontal=True, horizontal_alignment="center"):
             with st.container(width="content", gap="xsmall"):
                 st.title("라운지")
                 st.caption(f"{today.year}년 {today.month}월 {today.day}일 {WEEKDAYS[today.weekday()]} · 한국 시간")
+            with st.container(width=440, key="lounge_creation_actions"):
+                creation_actions(actor)
 
         with st.container(border=True, gap="small", key="lounge_profile"):
             with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):

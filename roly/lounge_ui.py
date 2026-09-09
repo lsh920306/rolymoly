@@ -4,10 +4,31 @@ from hashlib import sha256
 
 import streamlit as st
 
-from roly.ui import perform
+from roly.ui import can_create, perform
 
 KST = timezone(timedelta(hours=9))
 WEEKDAYS = ('월요일', '화요일', '수요일', '목요일', '금요일', '토요일', '일요일')
+
+
+def creation_actions(actor):
+    """Open the existing creation flows without creating an event on navigation."""
+    allowed = can_create(actor)
+    columns = st.columns(2, gap='small')
+    for column, kind, label, icon, target in zip(
+        columns, ('NORMAL', 'AUCTION'), ('일반 내전 만들기', '경매 내전 만들기'),
+        (':material/groups:', ':material/gavel:'), ('app_pages/normal.py', 'app_pages/auction.py')
+    ):
+        if column.button(label, key=f'home_create_{kind.lower()}', type='primary',
+                         icon=icon, width='stretch', disabled=not allowed,
+                         help=None if allowed else '승인된 회원으로 로그인하면 내전을 만들 수 있습니다.') and allowed:
+            st.session_state.pop('focus_event', None)
+            st.session_state.pop('home_dialog', None)
+            st.session_state.pop('t_preparation_dialog', None)
+            st.session_state.pop('t_create_open', None)
+            st.session_state.pop('create_build_mode', None)
+            if kind == 'AUCTION':
+                st.session_state.create_build_mode = 'AUCTION'
+            st.switch_page(target)
 
 
 def local_time(value):

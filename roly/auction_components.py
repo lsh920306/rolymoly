@@ -443,6 +443,37 @@ export default function({parentElement, data}) {
 }
 """.replace("__MASTERY_LIMIT__", str(MASTERY_LIMIT))
 
+# Each presentation owns its own DOM. Fresh HTTP snapshots fan out to those
+# components in the same login/event context without rerunning Python widgets.
+JS = JS.replace("export default function(", "function renderAuctionView(", 1) + r"""
+export default function({parentElement,data}) {
+  const view=parentElement.ownerDocument.defaultView || globalThis;
+  const context=data?.live_context;
+  parentElement._rolyLiveViewDispose?.();
+  const select=views=>{
+    if(data.kind==='team')return views?.teams?.[String(data.live_team)] ? {kind:'team',team:views.teams[String(data.live_team)]} : null;
+    return views?.[data.kind] || null;
+  };
+  const cached=context ? select(view._rolyAuctionViews?.get(context)) : null;
+  let cleanup=renderAuctionView({parentElement,data:cached || data});
+  if(!context)return cleanup;
+  let disposed=false;
+  const update=event=>{
+    if(disposed || !parentElement.isConnected || event.detail?.context!==context)return;
+    const next=select(event.detail.views);
+    if(next)cleanup=renderAuctionView({parentElement,data:next});
+  };
+  view.addEventListener('roly-auction-frame',update);
+  const dispose=()=>{
+    if(disposed)return;disposed=true;
+    view.removeEventListener('roly-auction-frame',update);cleanup?.();
+    if(parentElement._rolyLiveViewDispose===dispose)parentElement._rolyLiveViewDispose=null;
+  };
+  parentElement._rolyLiveViewDispose=dispose;
+  return dispose;
+}
+"""
+
 COMPONENT_REVISION = sha256((HTML + "\0" + CSS + "\0" + JS).encode()).hexdigest()[:16]
 
 @st.cache_resource(scope="session", show_spinner=False)
@@ -532,8 +563,10 @@ def team_data(team, *, member_id=None, index=None):
         "slots": [{"role_code": role, "role": label, "players": [p for p in people if p["role_code"] == role]} for role, label in ROLES.items()]}
 
 
-def render_team(team, key, *, member_id=None):
+def render_team(team, key, *, member_id=None, live_context=None):
     data = {"kind": "team", "team": team_data(team, member_id=member_id)}
+    if live_context:
+        data.update(live_context=live_context, live_team=team["id"])
     _renderer()(data=data, key=key, height="content", width="stretch")
 
 
@@ -570,9 +603,9 @@ def stage_data(state, *, elapsed_seconds=0):
         "rule": f"입찰 +5초 · 최대 {state['bid_seconds']}초 · 다음 선수 준비 3초"}
 
 
-def render_history(bids, key):
+def render_history(bids, key, *, live_context=None):
     """A stable DOM list instead of dozens of Streamlit blocks per refresh."""
-    return _renderer()(data={"kind": "history", "bids": bids[:30]}, key=key,
+    return _renderer()(data={"kind": "history", "bids": bids[:30], **({"live_context": live_context} if live_context else {})}, key=key,
                        height="content", width="stretch")
 
 
@@ -580,22 +613,22 @@ def render_stage(state, key, *, elapsed_seconds=0):
     _renderer()(data=stage_data(state, elapsed_seconds=elapsed_seconds), key=key, height="content", width="stretch")
 
 
-def render_sound(state, key):
+def render_sound(state, key, *, live_context=None):
     event_id = state.get("event_id", state.get("event", {}).get("id"))
     cancelled = {lot["id"] for lot in state.get("lots") or [] if lot["status"] == "CANCELLED"}
     # Reset archives lots while retaining their bids. An unseen old bid must
     # not ring after reset, even if the browser missed the intermediate READY.
     latest = next((bid for bid in state.get("bids") or [] if bid.get("lot_id") not in cancelled), None)
     bid_id = latest.get("id") if latest else None
-    _renderer()(data={"kind": "sound", "event_id": event_id, "bid_id": bid_id}, key=key, height="content", width=200)
+    _renderer()(data={"kind": "sound", "event_id": event_id, "bid_id": bid_id, **({"live_context": live_context} if live_context else {})}, key=key, height="content", width=200)
 
 
-def render_overview(teams, key, *, member_id=None):
+def render_overview(teams, key, *, member_id=None, live_context=None):
     teams = teams["teams"] if isinstance(teams, dict) else teams
     cards = [team_data(team, member_id=member_id, index=index) for index, team in enumerate(teams)]
     with st.container(key="live_overview_panel" if len(cards) <= 4 else "live_overview_panel_many"):
         st.caption("팀별 포인트와 포지션 배정 현황을 한눈에 확인하세요.")
-        _renderer()(data={"kind": "overview", "teams": cards}, key=key, height="content", width="stretch")
+        _renderer()(data={"kind": "overview", "teams": cards, **({"live_context": live_context} if live_context else {})}, key=key, height="content", width="stretch")
 
 
 def _latest_lots(state):
@@ -637,8 +670,8 @@ def queue_data(state):
             "empty": "경매가 종료되었습니다." if state.get("status") in ("COMPLETED", "CANCELLED") else "경매 대상을 준비하고 있습니다."}
 
 
-def render_queue(state, key):
-    _renderer()(data=queue_data(state), key=key, height="content", width="stretch")
+def render_queue(state, key, *, live_context=None):
+    _renderer()(data={**queue_data(state), **({"live_context": live_context} if live_context else {})}, key=key, height="content", width="stretch")
 
 
 def remaining_data(state):
@@ -649,5 +682,27 @@ def remaining_data(state):
         "counts": [{"role": label, "count": sum(lot["role"] == role for lot in lots)} for role, label in ROLES.items()]}
 
 
-def render_remaining(state, key):
-    _renderer()(data=remaining_data(state), key=key, height="content", width="stretch")
+def render_remaining(state, key, *, live_context=None):
+    _renderer()(data={**remaining_data(state), **({"live_context": live_context} if live_context else {})}, key=key, height="content", width="stretch")
+
+
+def live_companion_data(state, actor):
+    """Public presentation for HTTP-driven cards; never include auth data."""
+    teams = state.get("teams", [])
+    member_id = actor.get("member_id") if actor else None
+    cards = {str(team["id"]): team_data(team, member_id=member_id, index=index)
+             for index, team in enumerate(teams)}
+    cancelled = {lot["id"] for lot in state.get("lots", []) if lot["status"] == "CANCELLED"}
+    bids = [bid for bid in state.get("bids", []) if bid["lot_id"] not in cancelled][:30]
+    names = {team["id"]: team["name"] for team in teams}
+    def stamp(value):
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.astimezone(ZoneInfo("Asia/Seoul")).strftime("%H:%M:%S")
+    return {"event_status": state.get("event", {}).get("status"),
+            "queue": queue_data(state), "remaining": remaining_data(state), "teams": cards,
+            "overview": {"kind": "overview", "teams": list(cards.values())},
+            "sound": {"kind": "sound", "event_id": state.get("event_id"), "bid_id": bids[0]["id"] if bids else None},
+            "history": {"kind": "history", "bids": [
+                {"id": bid["id"], "amount": f"{bid['amount']:,} P", "time": stamp(bid["created_at"]),
+                 "team": bid.get("team_name") or names.get(bid["team_id"], ""), "captain": bid.get("riot_id", "")}
+                for bid in bids]}}
