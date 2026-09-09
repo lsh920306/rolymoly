@@ -1,0 +1,40 @@
+.roly-preparation-teams {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  color: #182239;
+  font-family: "Pretendard", sans-serif;
+}
+.roly-preparation-teams *, .roly-preparation-teams *::before, .roly-preparation-teams *::after { box-sizing: border-box; }
+.roly-preparation-teams .prep-team { --team-accent: #3b82f6; min-width: 0; padding: 14px; background: #fff; border: 1px solid #f2e6ed; border-radius: 20px; box-shadow: 0 3px 12px #31254205; }
+.roly-preparation-teams .prep-team-2 { --team-accent: #ef4444; }
+.roly-preparation-teams .prep-team-3 { --team-accent: #16a36e; }
+.roly-preparation-teams .prep-team-4 { --team-accent: #d97706; }
+.roly-preparation-teams .prep-team-5 { --team-accent: #8b5cf6; }
+.roly-preparation-teams .prep-team-6 { --team-accent: #0891b2; }
+.roly-preparation-teams .prep-team-7 { --team-accent: #db2777; }
+.roly-preparation-teams .prep-team-8 { --team-accent: #64748b; }
+.roly-preparation-teams .prep-team-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.roly-preparation-teams .prep-team-header h3 { margin: 0; padding: 0; color: var(--team-accent); font-size: 20px; line-height: 26px; font-weight: 750; }
+.roly-preparation-teams .prep-count { padding: 4px 10px; color: #c24165; background: #fff0f5; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.roly-preparation-teams .prep-team-values { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; margin: 8px 0 10px; color: #64748b; font-size: 12px; }
+.roly-preparation-teams .prep-team-values strong { margin-left: 4px; color: #182239; font-size: 18px; font-weight: 750; }
+.roly-preparation-teams .prep-team-values small { align-self: center; color: #64748b; font-size: 12px; }
+.roly-preparation-teams .prep-people { display: grid; gap: 9px; }
+.roly-preparation-teams .prep-person { min-width: 0; padding: 10px; border: 1px solid #fce0e9; border-radius: 14px; background: #fff9fb; }
+.roly-preparation-teams .prep-person-header { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 8px; }
+.roly-preparation-teams .prep-avatar { display: grid; place-items: center; width: 42px; height: 42px; overflow: hidden; border-radius: 50%; background: #ffe1eb; color: #b6416a; font-size: 23px; font-weight: 700; }
+.roly-preparation-teams .prep-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.roly-preparation-teams .prep-person-info { min-width: 0; }
+.roly-preparation-teams .prep-person-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 15px; line-height: 21px; overflow-wrap: anywhere; }
+.roly-preparation-teams .prep-captain-badge { padding: 2px 6px; color: #b42332; background: #ffe9ec; border-radius: 5px; font-size: 11px; font-weight: 700; line-height: 16px; }
+.roly-preparation-teams .prep-riot-id { max-width: 100%; margin-top: 2px; color: #64748b; font-size: 12px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roly-preparation-teams .prep-rank-pills, .roly-preparation-teams .prep-position-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.roly-preparation-teams .prep-rank-pills span, .roly-preparation-teams .prep-position-pills span { padding: 3px 7px; border: 1px solid #efe7ee; border-radius: 6px; background: #fff; color: #696379; font-size: 11px; line-height: 16px; }
+.roly-preparation-teams .prep-masteries { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; gap: 4px; width: 100%; max-width: 146px; margin-top: 8px; }
+.roly-preparation-teams .prep-mastery { display: grid; place-items: center; width: 100%; max-width: 26px; height: auto; aspect-ratio: 1; border: 1px solid #e9dce3; border-radius: 50%; overflow: hidden; background: #f3edf2; color: #675c70; font-size: 10px; }
+.roly-preparation-teams .prep-mastery img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.roly-preparation-teams .prep-mastery-empty { grid-column: 1 / -1; color: #64748b; font-size: 11px; }
+@media (max-width: 720px) {
+  .roly-preparation-teams { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+}

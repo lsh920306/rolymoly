@@ -1,0 +1,630 @@
+{
+  ".gitignore": {
+    "bytes": 170,
+    "sha256": "e1fcdedb4b2c98326e0c3e7056010c96e02c96dfd1ad8c0217e8408d3ff389f1"
+  },
+  ".python-version": {
+    "bytes": 5,
+    "sha256": "49a506dd32096b010d75205acf3430c9ae6c40351888129499e5a5e487126c93"
+  },
+  ".streamlit/config.toml": {
+    "bytes": 1126,
+    "sha256": "22bc4ec226aac2c42541cfba0cab888f83c4a75509efaef651499294b5a5e717"
+  },
+  ".streamlit/secrets.toml.example": {
+    "bytes": 1676,
+    "sha256": "95404409156a621c81909e274740494dd173cd92d97d8dc07ecf9f94f242ea48"
+  },
+  "AUCTION_REFERENCE_MAPPING.md": {
+    "bytes": 20677,
+    "sha256": "096193e045b3f97da2f114c1523b08b579101fb9d236aef4254d23823a9e894e"
+  },
+  "CLEANUP_REPORT.md": {
+    "bytes": 3714,
+    "sha256": "095e17fe43383c8e269deba225d54579a75de3472f3a8cf7b8d3e3d62066c186"
+  },
+  "CODE_REVIEW.md": {
+    "bytes": 13012,
+    "sha256": "9123c55fa5cec6020f3fd0adba7d4a51b025af89d4fcbd7a23660f5b7d5f8a6a"
+  },
+  "CURRENT_FLOW.md": {
+    "bytes": 29529,
+    "sha256": "788f5a4e671979513177163399dbeba4772d6554fe8e4242e73fee6b03646c7d"
+  },
+  "DB_IMPROVEMENTS_REPORT.md": {
+    "bytes": 15910,
+    "sha256": "45edfe2d3337086c779557b4072983c980690ce0f6dea76bbf73f04a5b87bbe6"
+  },
+  "DB_INTEGRATION_REVIEW.md": {
+    "bytes": 15738,
+    "sha256": "6817903c95b4ea17cb451bf7f9a7708094f39e7fe5232d2a7648ea4559f09596"
+  },
+  "DEPLOYMENT.md": {
+    "bytes": 41570,
+    "sha256": "3822d62118d61a5627508aeeb164183256507343a782abf5419e0caf582c9618"
+  },
+  "DEPLOYMENT_VERIFICATION_REPORT.md": {
+    "bytes": 13864,
+    "sha256": "d2d9c213ff2fb5dd906919ad1a7200d4f0667c32442912459e7a369061a9c01b"
+  },
+  "DESIGN.md": {
+    "bytes": 17866,
+    "sha256": "e60620edb78d69b767f754b0ddc911c0d3d6b125f0eae113520aed3f31463eb0"
+  },
+  "QA_SCENARIOS.md": {
+    "bytes": 21407,
+    "sha256": "9f9d1fe4cd0acc8d4bfba2099842fd435bda34a7cd22f7ff514d0e258e849419"
+  },
+  "README.md": {
+    "bytes": 36997,
+    "sha256": "0c2d4639ddb7443d986a2e091a508500c0f9a7f7b3fb5ac8c1a62f2ff702c870"
+  },
+  "REHEARSAL.md": {
+    "bytes": 28966,
+    "sha256": "f8cd66bf1f150a86e95df3ef010c5c2fb8f5a59f17ffbfc6e0acb56b669dc012"
+  },
+  "REVIEW.md": {
+    "bytes": 30664,
+    "sha256": "585d8f0e452f6bd2a3cff66f77ecf3aa6b96ded88e5c7ce26db956fafc234dc6"
+  },
+  "RIOT_API_REPORT.md": {
+    "bytes": 19758,
+    "sha256": "300446bec73f2a825158130daaf6a7f6237d161a2c6854fafdb5855619e227e8"
+  },
+  "Rolymoly_검토보고서.md": {
+    "bytes": 31237,
+    "sha256": "ba1d6c6ab3eb805870ae408af48049fa5511352eff81b5e554c42ada6c5a06c8"
+  },
+  "WEMINGLE_레퍼런스_가능여부_검토.md": {
+    "bytes": 11654,
+    "sha256": "7014052b0913883543089df6e36dd6783325ff2a09958030ed28d6c9b2fe3a67"
+  },
+  "app.py": {
+    "bytes": 82,
+    "sha256": "cda0e4e9e5b281fb99cc2592d092f73f9df3f3b073460fb090812ff0827f4068"
+  },
+  "app_pages/admin.py": {
+    "bytes": 23759,
+    "sha256": "4b8afd9369826c3b205c543bbdc068127bb7fb907fcb4a984b3a6b01571a3c2a"
+  },
+  "app_pages/auction.py": {
+    "bytes": 16343,
+    "sha256": "c55951e6e582890f177e92b4f7d294548bc82b51bb4e62ea40b3209a526810d3"
+  },
+  "app_pages/events.py": {
+    "bytes": 32473,
+    "sha256": "eb4cfcb55af88ee7574e7a2994c610e698f838502c5335d44f4380ea9a644910"
+  },
+  "app_pages/home.py": {
+    "bytes": 11898,
+    "sha256": "3d8dcc48e7dacdd02bd5478e8aa772f2ff4ad5bf6f9ced0be4c653abbcb36f6b"
+  },
+  "app_pages/join.py": {
+    "bytes": 8409,
+    "sha256": "3c3f55c5a9fc0c1da000a4dd0b981eeee6cfe13aadb9d1a863e4fc2269b43efa"
+  },
+  "app_pages/members.py": {
+    "bytes": 4391,
+    "sha256": "e7a3467e199865f96e348f216963f321dade3769853dfca2236b646f1940f734"
+  },
+  "app_pages/normal.py": {
+    "bytes": 4119,
+    "sha256": "f3a290d7942dd4a9a0acf5bcf9aaa097de6fe8d9f66f50c48e591cc6e3648369"
+  },
+  "app_pages/profile.py": {
+    "bytes": 1187,
+    "sha256": "46337016c5281c5d87f57ce9c6b7065cb087426839c32e6bb6748b602d838e81"
+  },
+  "requirements.txt": {
+    "bytes": 55,
+    "sha256": "90a9066fbca2da1109ffd01aab4217adb931fa181db40ea01d1586f5557c198a"
+  },
+  "roly/__init__.py": {
+    "bytes": 113,
+    "sha256": "97f20f0583ec8527c9ffc13e84d8b849bf6d012f5d63425957ce579c63bfc36e"
+  },
+  "roly/auction_components.py": {
+    "bytes": 39916,
+    "sha256": "e0b9815848a5f592a38a99ef2f9ab55d96f841dbb72d0a069b7de7feabdc1b29"
+  },
+  "roly/auction_sync.py": {
+    "bytes": 2482,
+    "sha256": "31a507ae8b4143b3877183e271467dbe2d0613fa6734d8783a49a9dd4ec20dcf"
+  },
+  "roly/auction_ui.py": {
+    "bytes": 38129,
+    "sha256": "c8680281b971a4d14639243d0a5ac5a5d51ac8d11512d89e56ae31701d188943"
+  },
+  "roly/auth.py": {
+    "bytes": 16529,
+    "sha256": "e4fc68be65c5ccada28b076a69cd837b5f0fcbe114b68565b54e709222004746"
+  },
+  "roly/browser_session.py": {
+    "bytes": 3212,
+    "sha256": "86d0e272350b582d3eb14f9c4fd4416a723d2743b372803c3156a730061ca572"
+  },
+  "roly/competition.py": {
+    "bytes": 61560,
+    "sha256": "a3ab238636211bfad825f6918cc5c43ba03ef3d743d24cf9f48eaec5a17f5230"
+  },
+  "roly/core.py": {
+    "bytes": 67257,
+    "sha256": "92a477e92bd45b7f6e6eba1a3f02118c317832854f7e4b8bf98eca29b1fb0446"
+  },
+  "roly/demo.py": {
+    "bytes": 7190,
+    "sha256": "f5c86a186d3c15889aeecbb4ac3975ce551a20f558a22640b3fea28275c42e21"
+  },
+  "roly/deployment_config.py": {
+    "bytes": 3773,
+    "sha256": "3e965eddcf8336d949231ee2731f6acdf234517cdd84798fc7a2f21c16f0e13b"
+  },
+  "roly/live_auction.py": {
+    "bytes": 63880,
+    "sha256": "2e81114e8c6c0669509a3215d50585205ef4739ac3e225a5da21c4e8f11529db"
+  },
+  "roly/lounge.py": {
+    "bytes": 4021,
+    "sha256": "bef2cb9049b2a71ddb7ee5372f54deca287ab84d8165b57d0f4d109a86506047"
+  },
+  "roly/lounge_ui.py": {
+    "bytes": 3501,
+    "sha256": "d1a5a538a5d488504e0b05e96eb6c938faf86f936f6ba46544584e95c71da52b"
+  },
+  "roly/member_cards.py": {
+    "bytes": 8029,
+    "sha256": "30d910160cea63ac3c002d07ccac2130e8854e5924fa86f026f71efccb41932c"
+  },
+  "roly/member_editor.py": {
+    "bytes": 5417,
+    "sha256": "56dbdd104bcfaffb19f842335654d2350d8bd0f0613132222befa611d07bb926"
+  },
+  "roly/member_profile.py": {
+    "bytes": 2826,
+    "sha256": "47d3511f1e660d30e43d4682fb3dce3cf5d8ba6e8b5445c8e3632d5f083644d2"
+  },
+  "roly/member_profile_page.py": {
+    "bytes": 6053,
+    "sha256": "345f35f6bddb8b2ecd211ab15d909a0a94cb7e619c0b21ec43aa9428a75f02a5"
+  },
+  "roly/member_records.py": {
+    "bytes": 5914,
+    "sha256": "541c748ec34f92f938bdea92d2b3f629a3feaa2b611ca2bf29455aef36272852"
+  },
+  "roly/postgres.py": {
+    "bytes": 32912,
+    "sha256": "d86a545d5313091c3023a61bd4dadbedd76fbf11e1952a385173568ab5c67399"
+  },
+  "roly/registration_ui.py": {
+    "bytes": 8062,
+    "sha256": "355078b9c0076102a3be3054cbb9c51d79c62eeb589785b5c29d99a6bf3f01ae"
+  },
+  "roly/result_revision.py": {
+    "bytes": 14241,
+    "sha256": "104d6bdcd101cc8810c2ab2098a9633d205537bf0733ad2d1826f55ebe27b31a"
+  },
+  "roly/riot_api.py": {
+    "bytes": 15645,
+    "sha256": "0be6ca790594cacbc0f77bbbbc9282870639f1f31a04b0a3ee268ef547837b83"
+  },
+  "roly/riot_profile.py": {
+    "bytes": 3924,
+    "sha256": "cc1175ddf0ab079d1346bef4b7302980f320c40b05049a5bd922c429e62d0b80"
+  },
+  "roly/riot_sync.py": {
+    "bytes": 25317,
+    "sha256": "7c3e3432919c29564396fb4e5c05e02941f7207ee43fa26b5dee0a8c8ac5a79f"
+  },
+  "roly/riot_ui.py": {
+    "bytes": 8530,
+    "sha256": "fab75891d920536cceb6da80d95b24a21c1f3e899e9812f5ff19badd4179978a"
+  },
+  "roly/roster_ui.py": {
+    "bytes": 10755,
+    "sha256": "1921cd6680be427b88ebf5f723a0123bb2a927c690e823726e86fc1b3f4d80e0"
+  },
+  "roly/self_profile_ui.py": {
+    "bytes": 3821,
+    "sha256": "8e2d17b33d31f85cec1eb67194d002648091f854ea744da78b8430b66a5acf5a"
+  },
+  "roly/server.py": {
+    "bytes": 1242,
+    "sha256": "7dcdda44fce7695540fe856cc593a9a54bf8c595b5f39395f6920cfe1acd8101"
+  },
+  "roly/storage_config.py": {
+    "bytes": 7443,
+    "sha256": "010324169a0b57353dac15cd26af538ff38569492e97ebc51325b605b3ebb89c"
+  },
+  "roly/team_cards.py": {
+    "bytes": 6122,
+    "sha256": "69e740d23d31bb13e2217ab904735fe352d82979ec74b257d93a3d65d0230acb"
+  },
+  "roly/tournament.py": {
+    "bytes": 31724,
+    "sha256": "a07a387afc471820ef6abfe3277435ea9c6172c857e57e1995450afa60f1e0c8"
+  },
+  "roly/tournament_ui.py": {
+    "bytes": 13742,
+    "sha256": "0ee2230e11aa7f9ddae14367e25e5584377f5ec23d16473b4999e0a79e884831"
+  },
+  "roly/ui.py": {
+    "bytes": 20230,
+    "sha256": "5c01ac1f26b9343527c1c736a927498f4f7032f87158e626b5585627a64a2cb8"
+  },
+  "run.bat": {
+    "bytes": 147,
+    "sha256": "9fb6ba503e97685b532a7862143c06831b3cc29dbe11c1c33b3dffcc6d13a569"
+  },
+  "scripts/backup_storage.py": {
+    "bytes": 21464,
+    "sha256": "e7c5e11aa0c6f0ba0f8f4c1d6ac9c3a0069002ad56e966ab731f1419ba5b84de"
+  },
+  "scripts/check_supabase.py": {
+    "bytes": 5230,
+    "sha256": "578f5a3578db4e958a49440242f66d3ef65d3c21217d35a9d64eefca8065be46"
+  },
+  "scripts/create_admin.py": {
+    "bytes": 1916,
+    "sha256": "7c908dd616c7027ca9f588b76310743cb63bd18e7e2599d4aeb05ed8a38b2760"
+  },
+  "scripts/package_source.py": {
+    "bytes": 2668,
+    "sha256": "cd4ba73189e2fb81f520a35b142ad90d7b7c8478ba25701974206e5334c7b814"
+  },
+  "scripts/prepare_demo_riot.py": {
+    "bytes": 10561,
+    "sha256": "dd39a06f742b8fe4fc2bf98db14eb323385ed382985ebbd0726934d7a563f7e8"
+  },
+  "scripts/prepare_storage.py": {
+    "bytes": 1524,
+    "sha256": "1be9ab38083ef8b26e9896cbedb27db1306c1cc7e4cbcf404ef7a4cd3e535298"
+  },
+  "scripts/rehearse_auction_reset.py": {
+    "bytes": 15134,
+    "sha256": "94e381e409cba46838a6447615c3547d84bfc61d8c0b3b370ba9ea11a1b61673"
+  },
+  "scripts/rehearse_member_normal.py": {
+    "bytes": 23823,
+    "sha256": "9ce655a425e8772209e6df275971c67cdb6dac6db6d0fd4b38ae8ed8e48f36ae"
+  },
+  "scripts/rehearse_postgres.py": {
+    "bytes": 23237,
+    "sha256": "328be319869780e2829e72f2a9bf1652236bafe3d02b977d58877c069c3c7118"
+  },
+  "scripts/rehearse_recovery.py": {
+    "bytes": 15649,
+    "sha256": "63a539934679cb2d95f0bf9919e4244d2d5cf3a1438c53d826f7f1a5cc64ae51"
+  },
+  "scripts/rehearse_riot.py": {
+    "bytes": 26846,
+    "sha256": "55ac812130e460a88614709a4fa0d2ab5c7f1594ba666ae91c6f5a5afb0be080"
+  },
+  "scripts/test_release.py": {
+    "bytes": 2509,
+    "sha256": "a09e976c23945d9d5bcff30679ba56dff5fbb1347e8b93e54df37e029399b7c3"
+  },
+  "static/Pretendard-LICENSE.txt": {
+    "bytes": 4816,
+    "sha256": "82e9c8a4b203261f10ddba1296422d64914ff3d4b7bd8a12896d03f0f088d70a"
+  },
+  "static/PretendardVariable.woff2": {
+    "bytes": 2057688,
+    "sha256": "9599f12fd42fc0bce1cd50b47a0c022e108d7aa64dd0d1bb0ed44f3282d900b4"
+  },
+  "static/app.css": {
+    "bytes": 10775,
+    "sha256": "7a920b256e3e8d29f1e5b5df6757b977e89fac6ba93b613cd532d34be5f298eb"
+  },
+  "static/demo-riot-profiles.json": {
+    "bytes": 34177,
+    "sha256": "c6df32c18f09b9923d45b381abd940534d902dad2ccb69ec4f5330e63b5bdac6"
+  },
+  "static/preparation_teams.css": {
+    "bytes": 4190,
+    "sha256": "15cefa3d47194b05c658b0839db081662ebdf11977d25a49b28ae53149230b80"
+  },
+  "static/rolymoly-poster-SOURCE.md": {
+    "bytes": 504,
+    "sha256": "021bf87ea92704e2349a8f0a03fe0128f13c5c14a81ccf88400535472c3f3b04"
+  },
+  "static/rolymoly-poster.png": {
+    "bytes": 3035576,
+    "sha256": "04f179bdb2038a583bbd11ba77d799d0a9a809be4555a728e7215a079ff58da1"
+  },
+  "static/wordmark.svg": {
+    "bytes": 303,
+    "sha256": "4d6585d1dd2d286b76dbea5e68415c2afbf9248b9863eca7ace33de8ca9a36d2"
+  },
+  "streamlit_app.py": {
+    "bytes": 108,
+    "sha256": "4d00aeb1165db39f7255aafb2412d82c4e6916c4a9372f5560b0ca89a41e5f68"
+  },
+  "tests/riot_rate_worker.py": {
+    "bytes": 1674,
+    "sha256": "971b4fb79a150e646d4fdac435aaaef4d2071c68fb06588fbaf96135c463d0b6"
+  },
+  "tests/test_account_lifecycle.py": {
+    "bytes": 15193,
+    "sha256": "37dbe2a2ae533c37c620d0d0e58fe3967b7e8dd37226c412ceed483183131e1d"
+  },
+  "tests/test_approval_context.py": {
+    "bytes": 8526,
+    "sha256": "948d4a631e20ae34084a04bdd47f2e4df1dbc091d4d9706ee9183bfd4c91784a"
+  },
+  "tests/test_auction_components.py": {
+    "bytes": 33970,
+    "sha256": "8e8cd2b70984429e6077a7becd1d76c9260bd62dbf99c4064cb68226fa1521b0"
+  },
+  "tests/test_auction_reset.py": {
+    "bytes": 14883,
+    "sha256": "376312f576d89c7ce2c705ca1b632ca493dd0b4ea8f8f3406e66ad94d3718288"
+  },
+  "tests/test_auction_reset_ui.py": {
+    "bytes": 7403,
+    "sha256": "7dbc954b785f227020b7ce06a0bc6c2da6f07ded748bb78eb4b9fef2917c7b12"
+  },
+  "tests/test_auction_settings_concurrency.py": {
+    "bytes": 2682,
+    "sha256": "d1b1d803f91dfb8ea1c0d938a989ef98e69d0858ba99655318da62817feb1edf"
+  },
+  "tests/test_auction_setup_flow.py": {
+    "bytes": 10765,
+    "sha256": "06a0384957f009151592436d3ab73088e70a54f6e0a55f1bd768cb6eb3e22e49"
+  },
+  "tests/test_auction_sync.py": {
+    "bytes": 5305,
+    "sha256": "2f4a645ed367dc0c2e99c93973fb81f0bebd3617122ccb8e2affea4cab6d5e96"
+  },
+  "tests/test_auction_ui.py": {
+    "bytes": 3924,
+    "sha256": "53609ff1a0094e42190eae0c8b51560a83d798665d43304d84d70213bb957cc7"
+  },
+  "tests/test_auth_live_bid.py": {
+    "bytes": 4462,
+    "sha256": "454007c6611df9f59c4a4dfab21bcc426037cc175c247f32dd366e24d147f4cb"
+  },
+  "tests/test_backup_storage.py": {
+    "bytes": 16007,
+    "sha256": "71c7455f01b47d10541b1fac1cd38e79d93b97e11ecba5cbe9e3bd4bca755abd"
+  },
+  "tests/test_bid_recovery.py": {
+    "bytes": 5894,
+    "sha256": "675a09ecf6bba3128a650e288ee9da4bc30263147691668914cab215775cefcd"
+  },
+  "tests/test_bid_recovery_extra.py": {
+    "bytes": 8516,
+    "sha256": "d3063f300aedcd9efc742e2fb89040345b1b50715393356b4683c28d7e892fcd"
+  },
+  "tests/test_competition.py": {
+    "bytes": 17264,
+    "sha256": "e342e2a3d4adb4ff3fef61dafb803f1c189d17d407586c08677da0f60b998fdf"
+  },
+  "tests/test_core.py": {
+    "bytes": 18808,
+    "sha256": "55ddf9138d2493b66af62f90966a1bd87c943d909157453c26176b6bd25a7dca"
+  },
+  "tests/test_creation_requests.py": {
+    "bytes": 7312,
+    "sha256": "e7537c3da8b60daa6e48207510500ef0ff85a0f1d661b8780e193299cc612512"
+  },
+  "tests/test_creation_requests_ui.py": {
+    "bytes": 10732,
+    "sha256": "4df37763bc6601c256d75c26751e48c6fe6c2b36818b4520283896149f647d33"
+  },
+  "tests/test_demo.py": {
+    "bytes": 9155,
+    "sha256": "ddfd5c443cb2f6eb78df3bc33ab9c9d57fa6aba8a2f2ff270afbe9e015538b85"
+  },
+  "tests/test_demo_riot_snapshot.py": {
+    "bytes": 8944,
+    "sha256": "d2c9a6dabd3114e2ae77a099de8f656102db8e90a258e39f519b331deb7893d8"
+  },
+  "tests/test_demo_riot_ui.py": {
+    "bytes": 18352,
+    "sha256": "b34e4891d70acf62c5186421593b2dae2b2d6d80408bf6eccf48e019391c8dd4"
+  },
+  "tests/test_demo_roster.py": {
+    "bytes": 11900,
+    "sha256": "901e50707e3e43576a1271bcff3f55d721e61e30970b2ae23ebe65cf70671e8f"
+  },
+  "tests/test_deployment_config.py": {
+    "bytes": 6299,
+    "sha256": "39f610d1a4f6d5c92463adbd0cad6cd3a60505e5b688b459154839fe5b69c6af"
+  },
+  "tests/test_deployment_ui.py": {
+    "bytes": 8989,
+    "sha256": "297f961160cd453a0b2daeeddc249ceef82d45af0ff644dddd54e5d8d8014a37"
+  },
+  "tests/test_dialog_sessions.py": {
+    "bytes": 8154,
+    "sha256": "28e0c4233a902c72945da32c063d342375a94a7d9cc575b624c0ce7bd8ea2f93"
+  },
+  "tests/test_event_picker.py": {
+    "bytes": 9817,
+    "sha256": "cab34b755b53fc1277ecbee366733d8078ff5d15b35442e4ea12d728280bc01b"
+  },
+  "tests/test_events_ui.py": {
+    "bytes": 27927,
+    "sha256": "58e8241b55c38abc93323002fb01eab82fdd788dd0386ed583ee34929d05a310"
+  },
+  "tests/test_home_ui.py": {
+    "bytes": 12822,
+    "sha256": "46d2e0f97e822a5738bb2b9db117e214a03e441bccee6724346a24e25c549d11"
+  },
+  "tests/test_live_auction.py": {
+    "bytes": 40000,
+    "sha256": "3b08a461cf7699d9dd8ba25e6488013183412a0ac7114558acf6e10c7fddaafc"
+  },
+  "tests/test_live_auction_ui.py": {
+    "bytes": 41848,
+    "sha256": "d9e85cb262bd16c90e78c6cf3ae64ef82e7cc038612ed18b9b191c75125d682c"
+  },
+  "tests/test_live_corrections.py": {
+    "bytes": 19940,
+    "sha256": "f9489641adee73b0161762ba4e794aa0e0f7ffdd7463cca334b1e48246c1cd7f"
+  },
+  "tests/test_lounge.py": {
+    "bytes": 7832,
+    "sha256": "506c6220ea7a9f84a34b0e1b3c4795fb820631545f22cf423772127fae4792b3"
+  },
+  "tests/test_lounge_profile_ui.py": {
+    "bytes": 5737,
+    "sha256": "1ca33b07903fc462ecc5b45145045b87cbd955f37d60d432a71fbae848ea1480"
+  },
+  "tests/test_manual_adjustment_ui.py": {
+    "bytes": 7122,
+    "sha256": "dfb8f79c8dedd5c547bcdd27d317036717783cb5035209cc4c2ac95cbc43a15c"
+  },
+  "tests/test_member_cards.py": {
+    "bytes": 7402,
+    "sha256": "6d84963fe9df2d33d2cf4e5d2c59a222c7712802e52030e5b20e2aeb095d5382"
+  },
+  "tests/test_member_normal_rehearsal.py": {
+    "bytes": 3938,
+    "sha256": "ec2d4dbcfb4efc8dd4000bf850832cee0dfe830dcb3fdbb658fc496c6f1b2032"
+  },
+  "tests/test_member_profile.py": {
+    "bytes": 19473,
+    "sha256": "da17382ebcb0a0ffe02ce833166344186c846098caa488f12594f240b85e8557"
+  },
+  "tests/test_member_profile_ui.py": {
+    "bytes": 15738,
+    "sha256": "5a2eb8c16688fc10bedd75d69590d5ecb7d837a555da33b47d2cbd716463b54f"
+  },
+  "tests/test_member_records.py": {
+    "bytes": 8940,
+    "sha256": "7716e986c7caa12cedf4b2bf09d8bde7f2643eb5f5329b7ab3ffe57f94528e13"
+  },
+  "tests/test_member_snapshots.py": {
+    "bytes": 11028,
+    "sha256": "4f6e06e5ee28ed637f7232ebab340c216a3f6788f012f7dc6ec8a7bb75a3eab4"
+  },
+  "tests/test_operating_login.py": {
+    "bytes": 11301,
+    "sha256": "a86333a329406bf7082e98e10d8e235417055a626b4be779b85e62d5493d85ba"
+  },
+  "tests/test_personal_auth.py": {
+    "bytes": 21396,
+    "sha256": "a5a4718902d6c66610dd767623c26c6be1547f02c84af2edffcda6f3993979b0"
+  },
+  "tests/test_postgres_adapter.py": {
+    "bytes": 15472,
+    "sha256": "c9942a2adfc7c400aa3d3a56c6c51dee9dbc23679026a0e1ca819225a56d19fa"
+  },
+  "tests/test_postgres_rehearsal.py": {
+    "bytes": 4253,
+    "sha256": "ce64a432d475ec449ad83d6ae863dacb6ff8cb836e2781975c158b0c737b224a"
+  },
+  "tests/test_preparation_team_cards.py": {
+    "bytes": 12287,
+    "sha256": "b63ec5b8dcff005e751b827ff524ed156e1851d5e0338807e302e7fb2c6c327f"
+  },
+  "tests/test_profile_page.py": {
+    "bytes": 12670,
+    "sha256": "f9822b2099e58a01bb2c870cda56e1f52298b5fa3ef269271d7a74a39371e1da"
+  },
+  "tests/test_recovery_rehearsal.py": {
+    "bytes": 2177,
+    "sha256": "6fd6cda9280529439aad7918bac949463570e92a7af7ec9047b7f64e46d9db70"
+  },
+  "tests/test_remote_failures.py": {
+    "bytes": 7335,
+    "sha256": "a1ed367698f59458b3b24db9568f65babb3310b053970947bcb34723c0a2afb6"
+  },
+  "tests/test_result_context.py": {
+    "bytes": 8928,
+    "sha256": "163aa9cc0918fbc4140a406177158afeb12996a2b8323af28bbade07b7abecd9"
+  },
+  "tests/test_result_revision.py": {
+    "bytes": 19956,
+    "sha256": "d4d088f218b2bf23e853e9b8b3907876ba4c346a3969122a5ab1f507b4c0f629"
+  },
+  "tests/test_riot_api.py": {
+    "bytes": 18107,
+    "sha256": "31ab1bd4d885e5c1a4e88d7f5c0d21faaecda59f48c723a6b81cea9244b80b5e"
+  },
+  "tests/test_riot_integration.py": {
+    "bytes": 9433,
+    "sha256": "bd96ebc3da2e8ba310b509191e4f950ccad1e5f708b5d5e5553f6020dc269a8c"
+  },
+  "tests/test_riot_shared_budget.py": {
+    "bytes": 14479,
+    "sha256": "f6224c3affb7f5dcdea5901a81d1e0963ef51f9cd2f39a855a1d43fd28356a73"
+  },
+  "tests/test_riot_sync.py": {
+    "bytes": 28144,
+    "sha256": "7d2fe5856768367aaa6fd906921721a7569294cb645750ff0f8d52f6ab7e949b"
+  },
+  "tests/test_riot_ui.py": {
+    "bytes": 11475,
+    "sha256": "0cc8d75ec39f2895533f5898ebecbc6e1e265a19f971f69cdef062c39511aff5"
+  },
+  "tests/test_roster_matching.py": {
+    "bytes": 5199,
+    "sha256": "880251ade1868b47318672245bcef029fdd209f9867375b691bbcd79578054ef"
+  },
+  "tests/test_roster_ui.py": {
+    "bytes": 7682,
+    "sha256": "6a5f3efdae0d3205a0d698099093769d5cf1dc73f034c153b5890ccb5193a689"
+  },
+  "tests/test_roster_workflow.py": {
+    "bytes": 12903,
+    "sha256": "521c42977cafbae053b4352a729f0f71598e8de78977cc20caacc1a4eef5aa07"
+  },
+  "tests/test_security.py": {
+    "bytes": 3148,
+    "sha256": "32cab580bbc918650861ad6771ebf3113c555002d2cc76b71f4d34af152c9dcb"
+  },
+  "tests/test_security_review.py": {
+    "bytes": 11328,
+    "sha256": "69009d21a5a8ec4d05160e170f78caf3b35fd7a95baead21bff6ab8324761c22"
+  },
+  "tests/test_self_profile.py": {
+    "bytes": 15028,
+    "sha256": "6c6b5d54a080ad36aba77e42d5f1cbfbbb190d820943767fca2b3beb20eb783f"
+  },
+  "tests/test_self_profile_ui.py": {
+    "bytes": 11717,
+    "sha256": "f4aa1ed00a04aa0e568910106e8377606ed4496063211b56f7873ecb356b689c"
+  },
+  "tests/test_server.py": {
+    "bytes": 6349,
+    "sha256": "822384f5b5870e2dba1ec4bcb40e90e05d6d3280df95863939fc8a82f5675283"
+  },
+  "tests/test_storage_config.py": {
+    "bytes": 8861,
+    "sha256": "e2974dc433a08ff13f300db3118f0f5c91c8e289cb4ee43737f6569fc8856a26"
+  },
+  "tests/test_storage_selection_ui.py": {
+    "bytes": 3050,
+    "sha256": "36961b5364f2f79cd3955aadcae702527d22eec2cf84c904897b260bbc5af600"
+  },
+  "tests/test_supabase_connection.py": {
+    "bytes": 13963,
+    "sha256": "5be331871e16dc420d3d57e6870297606f5d0d8e725f4c5aa178457d5c93cde5"
+  },
+  "tests/test_tournament.py": {
+    "bytes": 34860,
+    "sha256": "dfd5501e775d9a6608701b2f370f21867b79e302eb4501796bbe9c7e4b906cb5"
+  },
+  "tests/test_tournament_ui.py": {
+    "bytes": 20851,
+    "sha256": "1144db0876f996738f170009ce52cb650afad453e6dbf7a387fd2e20b7b1a051"
+  },
+  "tests/test_ui.py": {
+    "bytes": 18209,
+    "sha256": "7fb4da46fd53226b3ceec3686e93925f1a9366ad52f5d68d80ced7f85994988c"
+  },
+  "신규설계_기준.md": {
+    "bytes": 16205,
+    "sha256": "86853844b8666df932fbca554a01b4c065e25a55c77ba4d32a0e5da4aec570c1"
+  },
+  "운영정책_개선검토.md": {
+    "bytes": 27097,
+    "sha256": "ac0910832834486df89a784b562158d399770bda5d6ff6c24fdfa67fa0847e38"
+  },
+  "운영정책_추출본.md": {
+    "bytes": 12600,
+    "sha256": "1ccd4c46a5ff2184c459e0dac739b7cd7429fbde82603dc9209e001f45591120"
+  }
+}

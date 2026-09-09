@@ -1,0 +1,1058 @@
+{
+  "generated_at": "2026-09-08T09:32:47+00:00",
+  "profiles": {
+    "겨울#kr99": {
+      "current_tier": "다이아몬드 4",
+      "lp": 0,
+      "champions": [
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 797868,
+          "level": 75
+        },
+        {
+          "id": 67,
+          "name": "베인",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Vayne.png",
+          "points": 585147,
+          "level": 52
+        },
+        {
+          "id": 145,
+          "name": "카이사",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Kaisa.png",
+          "points": 464854,
+          "level": 45
+        },
+        {
+          "id": 236,
+          "name": "루시안",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Lucian.png",
+          "points": 425768,
+          "level": 41
+        },
+        {
+          "id": 51,
+          "name": "케이틀린",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Caitlyn.png",
+          "points": 308777,
+          "level": 27
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/745.png",
+      "updated_at": "2026-09-08T09:32:36.413473+00:00",
+      "summoner_level": 493,
+      "rank_wins": 192,
+      "rank_losses": 197,
+      "flex_current_tier": "다이아몬드 2",
+      "flex_lp": 6,
+      "flex_rank_wins": 26,
+      "flex_rank_losses": 20
+    },
+    "kging#kr1": {
+      "current_tier": "마스터",
+      "lp": 25,
+      "champions": [
+        {
+          "id": 3,
+          "name": "갈리오",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Galio.png",
+          "points": 1078915,
+          "level": 101
+        },
+        {
+          "id": 268,
+          "name": "아지르",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Azir.png",
+          "points": 207605,
+          "level": 22
+        },
+        {
+          "id": 110,
+          "name": "바루스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Varus.png",
+          "points": 194847,
+          "level": 20
+        },
+        {
+          "id": 115,
+          "name": "직스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ziggs.png",
+          "points": 191851,
+          "level": 20
+        },
+        {
+          "id": 13,
+          "name": "라이즈",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ryze.png",
+          "points": 155240,
+          "level": 17
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/5583.png",
+      "updated_at": "2026-09-08T09:32:37.058135+00:00",
+      "summoner_level": 412,
+      "rank_wins": 36,
+      "rank_losses": 27,
+      "flex_current_tier": "다이아몬드 1",
+      "flex_lp": 1,
+      "flex_rank_wins": 156,
+      "flex_rank_losses": 142
+    },
+    "슬모띵#kr1": {
+      "current_tier": "실버 2",
+      "lp": 68,
+      "champions": [
+        {
+          "id": 350,
+          "name": "유미",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Yuumi.png",
+          "points": 271240,
+          "level": 27
+        },
+        {
+          "id": 147,
+          "name": "세라핀",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Seraphine.png",
+          "points": 181493,
+          "level": 19
+        },
+        {
+          "id": 117,
+          "name": "룰루",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Lulu.png",
+          "points": 132826,
+          "level": 15
+        },
+        {
+          "id": 25,
+          "name": "모르가나",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Morgana.png",
+          "points": 96096,
+          "level": 11
+        },
+        {
+          "id": 267,
+          "name": "나미",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Nami.png",
+          "points": 89232,
+          "level": 11
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/6504.png",
+      "updated_at": "2026-09-08T09:32:37.607737+00:00",
+      "summoner_level": 310,
+      "rank_wins": 39,
+      "rank_losses": 72,
+      "flex_current_tier": "플래티넘 3",
+      "flex_lp": 53,
+      "flex_rank_wins": 26,
+      "flex_rank_losses": 48
+    },
+    "마아먕고로룡#123": {
+      "current_tier": "에메랄드 4",
+      "lp": 9,
+      "champions": [
+        {
+          "id": 267,
+          "name": "나미",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Nami.png",
+          "points": 553229,
+          "level": 53
+        },
+        {
+          "id": 43,
+          "name": "카르마",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Karma.png",
+          "points": 444643,
+          "level": 43
+        },
+        {
+          "id": 117,
+          "name": "룰루",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Lulu.png",
+          "points": 436348,
+          "level": 42
+        },
+        {
+          "id": 99,
+          "name": "럭스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Lux.png",
+          "points": 256337,
+          "level": 25
+        },
+        {
+          "id": 16,
+          "name": "소라카",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Soraka.png",
+          "points": 200758,
+          "level": 21
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/1386.png",
+      "updated_at": "2026-09-08T09:32:38.091507+00:00",
+      "summoner_level": 639,
+      "rank_wins": 150,
+      "rank_losses": 164,
+      "flex_current_tier": "플래티넘 3",
+      "flex_lp": 41,
+      "flex_rank_wins": 50,
+      "flex_rank_losses": 65
+    },
+    "야동초등학교#kr1": {
+      "current_tier": "마스터",
+      "lp": 0,
+      "champions": [
+        {
+          "id": 412,
+          "name": "쓰레쉬",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Thresh.png",
+          "points": 606131,
+          "level": 57
+        },
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 324467,
+          "level": 29
+        },
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 239807,
+          "level": 22
+        },
+        {
+          "id": 143,
+          "name": "자이라",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Zyra.png",
+          "points": 150245,
+          "level": 16
+        },
+        {
+          "id": 150,
+          "name": "나르",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Gnar.png",
+          "points": 129154,
+          "level": 14
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/1640.png",
+      "updated_at": "2026-09-08T09:32:38.594674+00:00",
+      "summoner_level": 481,
+      "rank_wins": 119,
+      "rank_losses": 73,
+      "flex_current_tier": "에메랄드 2",
+      "flex_lp": 76,
+      "flex_rank_wins": 109,
+      "flex_rank_losses": 112
+    },
+    "메이쥐#kr0": {
+      "current_tier": "플래티넘 3",
+      "lp": 67,
+      "champions": [
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 315331,
+          "level": 31
+        },
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 248221,
+          "level": 23
+        },
+        {
+          "id": 22,
+          "name": "애쉬",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ashe.png",
+          "points": 188765,
+          "level": 20
+        },
+        {
+          "id": 202,
+          "name": "진",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Jhin.png",
+          "points": 141311,
+          "level": 15
+        },
+        {
+          "id": 4,
+          "name": "트위스티드 페이트",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/TwistedFate.png",
+          "points": 134981,
+          "level": 14
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/4895.png",
+      "updated_at": "2026-09-08T09:32:39.081564+00:00",
+      "summoner_level": 190,
+      "rank_wins": 299,
+      "rank_losses": 316,
+      "flex_current_tier": "골드 3",
+      "flex_lp": 91,
+      "flex_rank_wins": 6,
+      "flex_rank_losses": 7
+    },
+    "경 먀#kr1": {
+      "current_tier": "다이아몬드 2",
+      "lp": 50,
+      "champions": [
+        {
+          "id": 104,
+          "name": "그레이브즈",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Graves.png",
+          "points": 227596,
+          "level": 21
+        },
+        {
+          "id": 421,
+          "name": "렉사이",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/RekSai.png",
+          "points": 133654,
+          "level": 11
+        },
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 131585,
+          "level": 12
+        },
+        {
+          "id": 60,
+          "name": "엘리스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Elise.png",
+          "points": 100099,
+          "level": 9
+        },
+        {
+          "id": 141,
+          "name": "케인",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Kayn.png",
+          "points": 74272,
+          "level": 8
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/1629.png",
+      "updated_at": "2026-09-08T09:32:39.538174+00:00",
+      "summoner_level": 214,
+      "rank_wins": 18,
+      "rank_losses": 6,
+      "flex_current_tier": "언랭크",
+      "flex_lp": null,
+      "flex_rank_wins": 0,
+      "flex_rank_losses": 0
+    },
+    "남자는티오피#kr1": {
+      "current_tier": "다이아몬드 4",
+      "lp": 0,
+      "champions": [
+        {
+          "id": 122,
+          "name": "다리우스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Darius.png",
+          "points": 1057874,
+          "level": 99
+        },
+        {
+          "id": 92,
+          "name": "리븐",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Riven.png",
+          "points": 800406,
+          "level": 75
+        },
+        {
+          "id": 238,
+          "name": "제드",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Zed.png",
+          "points": 771166,
+          "level": 73
+        },
+        {
+          "id": 157,
+          "name": "야스오",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Yasuo.png",
+          "points": 282986,
+          "level": 28
+        },
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 240927,
+          "level": 24
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/6703.png",
+      "updated_at": "2026-09-08T09:32:40.018044+00:00",
+      "summoner_level": 429,
+      "rank_wins": 68,
+      "rank_losses": 58,
+      "flex_current_tier": "다이아몬드 1",
+      "flex_lp": 58,
+      "flex_rank_wins": 84,
+      "flex_rank_losses": 86
+    },
+    "콩이바람이아빠#kr1": {
+      "current_tier": "골드 3",
+      "lp": 37,
+      "champions": [
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 246514,
+          "level": 25
+        },
+        {
+          "id": 4,
+          "name": "트위스티드 페이트",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/TwistedFate.png",
+          "points": 185507,
+          "level": 19
+        },
+        {
+          "id": 79,
+          "name": "그라가스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Gragas.png",
+          "points": 148356,
+          "level": 14
+        },
+        {
+          "id": 51,
+          "name": "케이틀린",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Caitlyn.png",
+          "points": 143999,
+          "level": 15
+        },
+        {
+          "id": 7,
+          "name": "르블랑",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Leblanc.png",
+          "points": 134523,
+          "level": 15
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/4762.png",
+      "updated_at": "2026-09-08T09:32:40.512608+00:00",
+      "summoner_level": 457,
+      "rank_wins": 24,
+      "rank_losses": 32,
+      "flex_current_tier": "에메랄드 4",
+      "flex_lp": 79,
+      "flex_rank_wins": 25,
+      "flex_rank_losses": 26
+    },
+    "화려한솔로#외로운청년": {
+      "current_tier": "에메랄드 3",
+      "lp": 11,
+      "champions": [
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 210879,
+          "level": 22
+        },
+        {
+          "id": 517,
+          "name": "사일러스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Sylas.png",
+          "points": 124737,
+          "level": 14
+        },
+        {
+          "id": 266,
+          "name": "아트록스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Aatrox.png",
+          "points": 106463,
+          "level": 12
+        },
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 104857,
+          "level": 12
+        },
+        {
+          "id": 202,
+          "name": "진",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Jhin.png",
+          "points": 79574,
+          "level": 10
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/775.png",
+      "updated_at": "2026-09-08T09:32:40.984910+00:00",
+      "summoner_level": 369,
+      "rank_wins": 292,
+      "rank_losses": 300,
+      "flex_current_tier": "에메랄드 3",
+      "flex_lp": 83,
+      "flex_rank_wins": 52,
+      "flex_rank_losses": 61
+    },
+    "평화파밍사랑#kr4": {
+      "current_tier": "에메랄드 3",
+      "lp": 96,
+      "champions": [
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 499841,
+          "level": 44
+        },
+        {
+          "id": 58,
+          "name": "레넥톤",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Renekton.png",
+          "points": 383150,
+          "level": 34
+        },
+        {
+          "id": 85,
+          "name": "케넨",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Kennen.png",
+          "points": 343256,
+          "level": 34
+        },
+        {
+          "id": 51,
+          "name": "케이틀린",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Caitlyn.png",
+          "points": 210733,
+          "level": 20
+        },
+        {
+          "id": 59,
+          "name": "자르반 4세",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/JarvanIV.png",
+          "points": 136436,
+          "level": 15
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/718.png",
+      "updated_at": "2026-09-08T09:32:41.565016+00:00",
+      "summoner_level": 318,
+      "rank_wins": 158,
+      "rank_losses": 172,
+      "flex_current_tier": "다이아몬드 4",
+      "flex_lp": 28,
+      "flex_rank_wins": 28,
+      "flex_rank_losses": 43
+    },
+    "부리부리대만왕#kr2": {
+      "current_tier": "에메랄드 2",
+      "lp": 99,
+      "champions": [
+        {
+          "id": 119,
+          "name": "드레이븐",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Draven.png",
+          "points": 889526,
+          "level": 83
+        },
+        {
+          "id": 110,
+          "name": "바루스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Varus.png",
+          "points": 180746,
+          "level": 19
+        },
+        {
+          "id": 236,
+          "name": "루시안",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Lucian.png",
+          "points": 145034,
+          "level": 15
+        },
+        {
+          "id": 21,
+          "name": "미스 포츈",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/MissFortune.png",
+          "points": 117190,
+          "level": 13
+        },
+        {
+          "id": 895,
+          "name": "닐라",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Nilah.png",
+          "points": 113935,
+          "level": 13
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/7167.png",
+      "updated_at": "2026-09-08T09:32:42.031492+00:00",
+      "summoner_level": 410,
+      "rank_wins": 211,
+      "rank_losses": 193,
+      "flex_current_tier": "골드 1",
+      "flex_lp": 18,
+      "flex_rank_wins": 13,
+      "flex_rank_losses": 8
+    },
+    "siat#kr1": {
+      "current_tier": "다이아몬드 3",
+      "lp": 8,
+      "champions": [
+        {
+          "id": 114,
+          "name": "피오라",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Fiora.png",
+          "points": 416009,
+          "level": 40
+        },
+        {
+          "id": 84,
+          "name": "아칼리",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Akali.png",
+          "points": 291885,
+          "level": 29
+        },
+        {
+          "id": 164,
+          "name": "카밀",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Camille.png",
+          "points": 244421,
+          "level": 25
+        },
+        {
+          "id": 8,
+          "name": "블라디미르",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Vladimir.png",
+          "points": 218665,
+          "level": 23
+        },
+        {
+          "id": 777,
+          "name": "요네",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Yone.png",
+          "points": 170781,
+          "level": 18
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/1109.png",
+      "updated_at": "2026-09-08T09:32:42.576658+00:00",
+      "summoner_level": 599,
+      "rank_wins": 131,
+      "rank_losses": 116,
+      "flex_current_tier": "에메랄드 2",
+      "flex_lp": 46,
+      "flex_rank_wins": 45,
+      "flex_rank_losses": 41
+    },
+    "수 빈#kr111": {
+      "current_tier": "플래티넘 3",
+      "lp": 29,
+      "champions": [
+        {
+          "id": 34,
+          "name": "애니비아",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Anivia.png",
+          "points": 541252,
+          "level": 52
+        },
+        {
+          "id": 142,
+          "name": "조이",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Zoe.png",
+          "points": 216244,
+          "level": 22
+        },
+        {
+          "id": 202,
+          "name": "진",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Jhin.png",
+          "points": 164835,
+          "level": 18
+        },
+        {
+          "id": 119,
+          "name": "드레이븐",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Draven.png",
+          "points": 153852,
+          "level": 15
+        },
+        {
+          "id": 45,
+          "name": "베이가",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Veigar.png",
+          "points": 144148,
+          "level": 13
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/7178.png",
+      "updated_at": "2026-09-08T09:32:43.552535+00:00",
+      "summoner_level": 471,
+      "rank_wins": 20,
+      "rank_losses": 30,
+      "flex_current_tier": "에메랄드 3",
+      "flex_lp": 34,
+      "flex_rank_wins": 22,
+      "flex_rank_losses": 27
+    },
+    "치원#kr1": {
+      "current_tier": "언랭크",
+      "lp": null,
+      "champions": [
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 425473,
+          "level": 38
+        },
+        {
+          "id": 412,
+          "name": "쓰레쉬",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Thresh.png",
+          "points": 317560,
+          "level": 28
+        },
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 191426,
+          "level": 16
+        },
+        {
+          "id": 53,
+          "name": "블리츠크랭크",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Blitzcrank.png",
+          "points": 185589,
+          "level": 15
+        },
+        {
+          "id": 222,
+          "name": "징크스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Jinx.png",
+          "points": 142470,
+          "level": 13
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/5688.png",
+      "updated_at": "2026-09-08T09:32:44.098050+00:00",
+      "summoner_level": 477,
+      "rank_wins": 0,
+      "rank_losses": 0,
+      "flex_current_tier": "언랭크",
+      "flex_lp": null,
+      "flex_rank_wins": 0,
+      "flex_rank_losses": 0
+    },
+    "들기름무빙#kr01": {
+      "current_tier": "다이아몬드 4",
+      "lp": 44,
+      "champions": [
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 156171,
+          "level": 13
+        },
+        {
+          "id": 236,
+          "name": "루시안",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Lucian.png",
+          "points": 140717,
+          "level": 12
+        },
+        {
+          "id": 777,
+          "name": "요네",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Yone.png",
+          "points": 137861,
+          "level": 15
+        },
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 113129,
+          "level": 13
+        },
+        {
+          "id": 238,
+          "name": "제드",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Zed.png",
+          "points": 108993,
+          "level": 13
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/4895.png",
+      "updated_at": "2026-09-08T09:32:44.565158+00:00",
+      "summoner_level": 265,
+      "rank_wins": 72,
+      "rank_losses": 52,
+      "flex_current_tier": "다이아몬드 2",
+      "flex_lp": 87,
+      "flex_rank_wins": 42,
+      "flex_rank_losses": 46
+    },
+    "홍시먹다체함#kr0": {
+      "current_tier": "플래티넘 3",
+      "lp": 98,
+      "champions": [
+        {
+          "id": 266,
+          "name": "아트록스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Aatrox.png",
+          "points": 55079,
+          "level": 8
+        },
+        {
+          "id": 22,
+          "name": "애쉬",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ashe.png",
+          "points": 51315,
+          "level": 7
+        },
+        {
+          "id": 901,
+          "name": "스몰더",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Smolder.png",
+          "points": 43278,
+          "level": 7
+        },
+        {
+          "id": 86,
+          "name": "가렌",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Garen.png",
+          "points": 41208,
+          "level": 6
+        },
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 40289,
+          "level": 6
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/7178.png",
+      "updated_at": "2026-09-08T09:32:45.031841+00:00",
+      "summoner_level": 140,
+      "rank_wins": 63,
+      "rank_losses": 53,
+      "flex_current_tier": "에메랄드 3",
+      "flex_lp": 87,
+      "flex_rank_wins": 26,
+      "flex_rank_losses": 28
+    },
+    "라라루루#kr0": {
+      "current_tier": "골드 3",
+      "lp": 1,
+      "champions": [
+        {
+          "id": 117,
+          "name": "룰루",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Lulu.png",
+          "points": 83951,
+          "level": 10
+        },
+        {
+          "id": 902,
+          "name": "밀리오",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Milio.png",
+          "points": 48795,
+          "level": 7
+        },
+        {
+          "id": 16,
+          "name": "소라카",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Soraka.png",
+          "points": 43481,
+          "level": 7
+        },
+        {
+          "id": 90,
+          "name": "말자하",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Malzahar.png",
+          "points": 40335,
+          "level": 6
+        },
+        {
+          "id": 267,
+          "name": "나미",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Nami.png",
+          "points": 34434,
+          "level": 6
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/5714.png",
+      "updated_at": "2026-09-08T09:32:45.516019+00:00",
+      "summoner_level": 119,
+      "rank_wins": 6,
+      "rank_losses": 6,
+      "flex_current_tier": "플래티넘 1",
+      "flex_lp": 9,
+      "flex_rank_wins": 43,
+      "flex_rank_losses": 36
+    },
+    "정 현#kr2": {
+      "current_tier": "다이아몬드 4",
+      "lp": 10,
+      "champions": [
+        {
+          "id": 53,
+          "name": "블리츠크랭크",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Blitzcrank.png",
+          "points": 1147424,
+          "level": 107
+        },
+        {
+          "id": 412,
+          "name": "쓰레쉬",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Thresh.png",
+          "points": 893527,
+          "level": 84
+        },
+        {
+          "id": 43,
+          "name": "카르마",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Karma.png",
+          "points": 153938,
+          "level": 15
+        },
+        {
+          "id": 64,
+          "name": "리 신",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/LeeSin.png",
+          "points": 151177,
+          "level": 12
+        },
+        {
+          "id": 81,
+          "name": "이즈리얼",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ezreal.png",
+          "points": 144044,
+          "level": 12
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/7170.png",
+      "updated_at": "2026-09-08T09:32:46.003638+00:00",
+      "summoner_level": 516,
+      "rank_wins": 42,
+      "rank_losses": 53,
+      "flex_current_tier": "마스터",
+      "flex_lp": 1,
+      "flex_rank_wins": 69,
+      "flex_rank_losses": 70
+    },
+    "오도봉구#kr1": {
+      "current_tier": "에메랄드 2",
+      "lp": 75,
+      "champions": [
+        {
+          "id": 154,
+          "name": "자크",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Zac.png",
+          "points": 824361,
+          "level": 78
+        },
+        {
+          "id": 80,
+          "name": "판테온",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Pantheon.png",
+          "points": 562069,
+          "level": 50
+        },
+        {
+          "id": 59,
+          "name": "자르반 4세",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/JarvanIV.png",
+          "points": 292260,
+          "level": 26
+        },
+        {
+          "id": 516,
+          "name": "오른",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Ornn.png",
+          "points": 145267,
+          "level": 16
+        },
+        {
+          "id": 122,
+          "name": "다리우스",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Darius.png",
+          "points": 88495,
+          "level": 11
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/4895.png",
+      "updated_at": "2026-09-08T09:32:46.513439+00:00",
+      "summoner_level": 441,
+      "rank_wins": 65,
+      "rank_losses": 74,
+      "flex_current_tier": "에메랄드 1",
+      "flex_lp": 48,
+      "flex_rank_wins": 25,
+      "flex_rank_losses": 14
+    },
+    "건동김#kr1": {
+      "current_tier": "에메랄드 3",
+      "lp": 70,
+      "champions": [
+        {
+          "id": 84,
+          "name": "아칼리",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Akali.png",
+          "points": 175401,
+          "level": 14
+        },
+        {
+          "id": 897,
+          "name": "크산테",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/KSante.png",
+          "points": 125682,
+          "level": 14
+        },
+        {
+          "id": 164,
+          "name": "카밀",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Camille.png",
+          "points": 109907,
+          "level": 10
+        },
+        {
+          "id": 887,
+          "name": "그웬",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Gwen.png",
+          "points": 108563,
+          "level": 12
+        },
+        {
+          "id": 114,
+          "name": "피오라",
+          "icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/champion/Fiora.png",
+          "points": 91153,
+          "level": 11
+        }
+      ],
+      "profile_icon_url": "https://ddragon.leagueoflegends.com/cdn/16.17.1/img/profileicon/6031.png",
+      "updated_at": "2026-09-08T09:32:47.141659+00:00",
+      "summoner_level": 249,
+      "rank_wins": 86,
+      "rank_losses": 84,
+      "flex_current_tier": "에메랄드 1",
+      "flex_lp": 70,
+      "flex_rank_wins": 5,
+      "flex_rank_losses": 9
+    }
+  },
+  "errors": {
+    "야수#테토": "not_found"
+  }
+}

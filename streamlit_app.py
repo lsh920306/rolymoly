@@ -1,6 +1,4 @@
-import streamlit as st
+"""Compatibility entry point for the existing Community Cloud deployment."""
+from roly.ui import run
 
-st.title("🎈 My new app")
-st.write(
-    "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."
-)
+run()

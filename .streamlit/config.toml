@@ -1,0 +1,46 @@
+[theme]
+base = "light"
+primaryColor = "#CF3030"
+backgroundColor = "#F5F6FA"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#142238"
+font = "Pretendard"
+baseFontSize = 15
+baseFontWeight = 400
+headingFontSizes = ["24px", "20px", "17px", "15px", "14px", "12px"]
+headingFontWeights = [650, 650, 600, 600, 600, 600]
+baseRadius = "12px"
+buttonRadius = "8px"
+borderColor = "#DCE1E8"
+showWidgetBorder = true
+showSidebarBorder = true
+linkColor = "#C52F2F"
+dataframeHeaderBackgroundColor = "#EEF1F6"
+grayColor = "#536176"
+grayTextColor = "#536176"
+grayBackgroundColor = "#EEF1F6"
+blueColor = "#1D8BFF"
+blueBackgroundColor = "#E3F0FF"
+blueTextColor = "#0960B8"
+redColor = "#F94239"
+redBackgroundColor = "#FFEDEA"
+chartCategoricalColors = ["#1D8BFF", "#49627A", "#FFC83B", "#F94239", "#56B5A2"]
+
+[theme.sidebar]
+backgroundColor = "#F7F8FA"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1B223D"
+borderColor = "#E6E6E6"
+
+[[theme.fontFaces]]
+family = "Pretendard"
+url = "app/static/PretendardVariable.woff2"
+weight = "100 900"
+style = "normal"
+
+[server]
+headless = true
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false

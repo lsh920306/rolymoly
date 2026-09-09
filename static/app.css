@@ -1,0 +1,220 @@
+/* Surfaces requested from the supplied Wemingle screenshots.
+ * Only explicit Streamlit container keys are styled. Navigation, layout,
+ * widget states remain native. Member cards use an isolated CCv2 component.
+ */
+/* The lounge keeps its pink backdrop. Operating pages use the neutral theme. */
+[data-testid="stAppViewContainer"]:has(.st-key-page_home) {
+  background-color: #fff7f7;
+}
+
+:is(.st-key-page_members, .st-key-page_normal, .st-key-page_events,
+    .st-key-page_join, .st-key-page_admin, .st-key-auction_details) {
+  background-color: #ffffff;
+  border: 1px solid #dce1e8;
+  border-radius: 12px;
+  padding: 20px;
+}
+
+/* Captions are actual content (names, dates, points), not disabled text. */
+[class*="st-key-page_"] [data-testid="stCaptionContainer"],
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+[data-testid="stDialog"] [data-testid="stCaptionContainer"] {
+  color: #536176;
+  font-size: 13px;
+  line-height: 1.55;
+  opacity: 1;
+}
+
+.st-key-page_auction [data-testid="stExpander"],
+.st-key-page_events [data-testid="stExpander"],
+[data-testid="stDialog"] [role="dialog"] {
+  background-color: #ffffff;
+}
+
+:is(
+  .st-key-lounge_profile,
+  .st-key-lounge_auctions,
+  .st-key-lounge_normal,
+  .st-key-lounge_recent,
+  .st-key-lounge_record_link,
+  .st-key-lounge_members,
+  .st-key-lounge_pending
+) {
+  background-color: #ffffff;
+  border: 1px solid #f9e6e6;
+  border-radius: 20px;
+  padding: 20px;
+  box-shadow: 0 4px 16px rgb(27 34 61 / 3%);
+}
+
+.st-key-lounge_create {
+  background: #cf3030;
+  color: #ffffff;
+  border: 0;
+  border-radius: 20px;
+  padding: 16px 20px;
+}
+
+.st-key-lounge_create [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] {
+  color: #ffffff;
+}
+
+.st-key-lounge_create [data-testid="stBaseButton-primary"] {
+  background-color: #ffffff;
+  color: #c52f2f;
+  border: 0;
+  border-radius: 12px;
+}
+
+.st-key-lounge_create [data-testid="stBaseButton-primary"] [data-testid="stMarkdownContainer"] {
+  color: #c52f2f;
+}
+
+[class*="st-key-lounge_empty_"] {
+  background: #ffffff;
+  border: 1px solid #f9e6e6;
+  border-radius: 18px;
+}
+
+[class*="st-key-lounge_event_"] {
+  background: #ffffff;
+  border: 1px solid #f9e6e6;
+  border-radius: 16px;
+  padding: 16px;
+}
+
+[class*="st-key-lounge_event_"] [data-testid="stText"] {
+  font-weight: 600;
+}
+
+/* Auction controls and bid receipts have explicit, local surfaces. */
+[class*="st-key-live_controls_"],
+[class*="st-key-auction_bid_card_"],
+[class*="st-key-auction_current_panel_"],
+[class*="st-key-auction_history_panel_"],
+[class*="st-key-preparation_team_"],
+.st-key-auction_preparation_teams,
+.st-key-auction_participants {
+  background-color: #ffffff;
+  color: #142238;
+  border-color: #dce1e8;
+  border-radius: 12px;
+}
+
+[class*="st-key-auction_bid_card_"],
+[class*="st-key-auction_current_panel_"],
+[class*="st-key-auction_history_panel_"],
+.st-key-auction_preparation_teams,
+.st-key-auction_participants {
+  padding: 12px;
+}
+
+[class*="st-key-auction_bid_card_"] [data-testid="stMarkdownContainer"],
+[class*="st-key-auction_bid_card_"] [data-testid="stText"] {
+  color: #142238;
+}
+
+[class*="st-key-auction_bid_card_"] [data-testid="stCaptionContainer"] {
+  color: #536176;
+  opacity: 1;
+}
+
+[class*="st-key-auction_bid_card_"] [data-testid="stText"] {
+  font-weight: 600;
+}
+/* Shared member profile: identity and rank first, compact white surfaces. */
+.roly-member-profile { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px; border:1px solid #f0dede; border-left:4px solid #e34442; border-radius:14px; background:#fff; color:#142238; }
+.roly-member-profile .profile-identity { display:flex; align-items:center; gap:16px; min-width:0; }
+.roly-member-profile h1 { margin:0 0 6px; padding:0; font-size:26px; line-height:1.3; overflow-wrap:anywhere; }
+.roly-member-profile h1 span { color:#bc353b; font-size:23px; }
+.roly-member-profile .profile-avatar { display:grid; place-items:center; flex:0 0 72px; height:72px; border-radius:14px; background:#f3f5f8; overflow:hidden; font-size:30px; }
+.roly-member-profile .profile-avatar img { width:72px; height:72px; object-fit:cover; }
+.roly-member-profile .profile-ranks { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; min-width:390px; }
+.roly-member-profile .profile-rank { min-width:0; border:1px solid #f0dede; background:#fffbfb; border-radius:12px; padding:16px 18px; }
+.roly-member-profile .profile-rank strong { display:block; font-size:22px; margin:5px 0; }
+.roly-member-profile .profile-meta { font-size:13px; color:#536176; line-height:1.6; }
+.roly-member-profile .profile-kicker { font-size:12px; font-weight:650; color:#963d43; }
+@media(max-width:1100px) { .roly-member-profile { align-items:stretch; flex-direction:column; padding:18px; gap:16px; } .roly-member-profile .profile-ranks { min-width:0; } .roly-member-profile h1 {font-size:22px;} .roly-member-profile h1 span {font-size:19px;} }
+@media(max-width:450px) { .roly-member-profile .profile-ranks { grid-template-columns:1fr; } }
+
+/* Auction: a narrow team carousel and an unmistakable bidding workspace. */
+[class*="st-key-auction_team_panel_"] {
+  background:#fff; border:1px solid #dce1e8; border-radius:16px; padding:12px;
+}
+[class*="st-key-live_carousel_tools_"] button {
+  width:34px; min-width:34px; height:34px; min-height:34px; padding:0;
+  border-radius:50%; background:#f7f9fc; color:#526782; border:1px solid #e2e7ef;
+}
+/* Keep real text in the accessibility tree while showing only the icons. */
+[class*="st-key-live_carousel_tools_"] button [data-testid="stMarkdownContainer"] {
+  position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
+}
+[class*="st-key-live_balance_panel_"], [class*="st-key-live_amount_panel_"] {
+  background:#f5f7fb; border:1px solid #e1e6ee; border-radius:12px;
+  padding:10px 12px; min-height:88px;
+}
+[class*="st-key-live_balance_panel_"] [data-testid="stMarkdownContainer"] {
+  font-size:23px; line-height:1.3; text-align:right; color:#142238;
+}
+[class*="st-key-live_amount_panel_"] [data-testid="stNumberInputContainer"] {
+  background:transparent; border-color:transparent;
+}
+[class*="st-key-live_amount_panel_"] input {
+  font-size:23px; font-weight:700; text-align:right; color:#142238;
+}
+[class*="st-key-live_increments_"] button { border-radius:8px; min-height:34px; font-size:12px; padding:4px 7px; }
+[class*="st-key-live_bid_"] button:not(:disabled) {
+  background:#2457e9; border-color:#2457e9; color:#fff; min-height:46px;
+  border-radius:10px; font-weight:700; box-shadow:0 5px 12px rgb(36 87 233 / 15%);
+}
+[class*="st-key-live_bid_"] button:not(:disabled):hover { background:#1947ce; border-color:#1947ce; }
+[class*="st-key-live_bid_"] button:disabled { background:#dce0e7; color:#596b83; border-color:#dce0e7; min-height:46px; }
+[class*="st-key-live_carousel_tools_"] button:focus-visible,
+[class*="st-key-live_bid_"] button:focus-visible { outline:3px solid #789afb; outline-offset:3px; }
+@media(max-width:640px) {
+  [class*="st-key-live_increments_"] button { min-width:55px; }
+  [class*="st-key-live_balance_panel_"], [class*="st-key-live_amount_panel_"] { min-height:80px; }
+}
+
+/* Captain selection: accessible native buttons over compact profile cards. */
+[data-testid="stDialog"]:has(.st-key-t_captain_picker) > div {
+  width:min(520px,calc(100vw - 24px)); max-width:calc(100vw - 24px);
+  box-sizing:border-box; border-radius:22px; background:#fff;
+}
+[data-testid="stDialog"] [role="dialog"]:has(.st-key-t_captain_picker) {
+  width:100%; max-width:100%; box-sizing:border-box; border-radius:22px; background:#fff;
+}
+.st-key-t_captain_picker { width:100%; min-width:0; }
+.st-key-t_captain_header .captain-count { white-space:nowrap; color:#c53030; font-size:12px; font-weight:650; }
+.st-key-t_captain_header .captain-count strong { margin-left:5px; }
+.st-key-t_captain_header input { font-size:12px; }
+.st-key-t_captain_list { max-height:min(340px,calc(100dvh - 260px)); }
+[class*="st-key-t_captain_card_"] { position:relative; }
+.captain-choice { display:flex; align-items:center; gap:10px; min-width:0; min-height:88px; padding:12px; border:1px solid #e1e6ed; border-radius:12px; background:#f8f9fb; color:#142238; }
+.captain-choice.selected { border-color:#ef7777; background:#fff5f4; }
+.captain-choice-avatar { display:grid; place-items:center; flex:0 0 42px; height:42px; border-radius:50%; overflow:hidden; background:#e5eaf2; color:#40536e; font-size:20px; font-weight:750; }
+.captain-choice-avatar img { width:100%; height:100%; object-fit:cover; }
+.captain-choice-info { flex:1; min-width:0; }
+.captain-choice-info strong { display:block; font-size:14px; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.captain-choice-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 7px; margin-top:2px; color:#5a687c; font-size:11px; line-height:17px; }
+.captain-choice-rank { padding:0 5px; border-radius:4px; background:#edf0f5; color:#33455d; font-size:10px; font-weight:650; }
+.captain-choice-roles { display:flex; flex-wrap:wrap; gap:5px; margin-top:5px; }
+.captain-choice-roles span { padding:2px 6px; border-radius:10px; background:#ece8ff; color:#6241bc; font-size:10px; font-weight:650; line-height:14px; }
+.captain-choice-roles span + span { background:#eaf1ff; color:#3a61ad; }
+.captain-choice-badge { flex:0 0 auto; border-radius:12px; padding:4px 8px; background:#edf0f5; color:#5a687c; font-size:11px; font-weight:650; }
+.captain-choice.selected .captain-choice-badge { background:#ffe2e2; color:#bb2d2d; }
+[class*="st-key-t_captain_toggle_"] { position:absolute; inset:0; width:100%; height:100%; }
+[class*="st-key-t_captain_toggle_"] button { position:absolute; inset:0; width:100%; height:100%; padding:0; border:0; border-radius:12px; background:transparent; box-shadow:none; }
+[class*="st-key-t_captain_toggle_"] button > * { opacity:0; }
+[class*="st-key-t_captain_toggle_"] button:not(:disabled):hover { background:rgb(207 48 48 / 4%); border:1px solid #dc6262; }
+[class*="st-key-t_captain_toggle_"] button:focus-visible { outline:3px solid #cf3030; outline-offset:-3px; background:transparent; }
+.st-key-t_captain_actions button { min-height:42px; border-radius:10px; font-weight:650; }
+.st-key-t_captain_actions [data-testid="stBaseButton-primary"]:not(:disabled) { background:#df3030; border-color:#df3030; color:#fff; }
+.st-key-t_captain_actions [data-testid="stBaseButton-primary"]:not(:disabled):hover { background:#c72626; border-color:#c72626; }
+@media(max-width:480px) {
+  .captain-choice { padding:10px; gap:8px; }
+  .captain-choice-avatar { flex-basis:36px; height:36px; }
+  .captain-choice-info strong { font-size:13px; }
+  .captain-choice-badge { padding:4px 6px; font-size:10px; }
+}
