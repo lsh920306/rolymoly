@@ -52,8 +52,8 @@
     "sha256": "b02b1a3fd31f6499859f3d13070f295eb28f05069c0e8a982e11a98299c27746"
   },
   "DEPLOYMENT_VERIFICATION_REPORT.md": {
-    "bytes": 24532,
-    "sha256": "edb9ee5c3cb2b5c9da409356a3cc1de46e9869831e0bd73089c6d1610f9b6680"
+    "bytes": 24754,
+    "sha256": "c674b4ff96096f81335d66d07f9d94ab2d17936dc70fa934190e191a1ef72e4f"
   },
   "DESIGN.md": {
     "bytes": 17866,
@@ -64,8 +64,8 @@
     "sha256": "9f9d1fe4cd0acc8d4bfba2099842fd435bda34a7cd22f7ff514d0e258e849419"
   },
   "README.md": {
-    "bytes": 37747,
-    "sha256": "f79d53a1815eabc0d08ae588110ac75d2374b9333ac3262c9cdc914d8b6ad16f"
+    "bytes": 1431,
+    "sha256": "92e01f56b9c17fac51076c370d5bfdd44fb641944667f66d83f90ccf0a22d306"
   },
   "REHEARSAL.md": {
     "bytes": 28966,
@@ -104,8 +104,8 @@
     "sha256": "f1b457bf4f9f3864be6968c34faf2aa167f3fb01edcd2173ac774c5b7c6d90ea"
   },
   "app_pages/home.py": {
-    "bytes": 10881,
-    "sha256": "2dc318e2ae2779cd76e303584d921b8a86c6deb4bb295bae777871b9a5591a57"
+    "bytes": 11344,
+    "sha256": "6077095747c8428088685c1269a80307f5fd6c661de64e6bb8376437b1dabe02"
   },
   "app_pages/join.py": {
     "bytes": 7767,
@@ -124,8 +124,8 @@
     "sha256": "46337016c5281c5d87f57ce9c6b7065cb087426839c32e6bb6748b602d838e81"
   },
   "docs/ROLYMOLY_IMPLEMENTATION_REPORT.md": {
-    "bytes": 86864,
-    "sha256": "ec4bf4d019cb35adf08f7aa1faf2e69d9049fe1d90bcad6085f77b8e8a2cd160"
+    "bytes": 89396,
+    "sha256": "31776a14f96f66d07173dd1c7f39ad1048c641fc43e2415335fe604051500b78"
   },
   "requirements.txt": {
     "bytes": 75,
@@ -196,8 +196,8 @@
     "sha256": "bef2cb9049b2a71ddb7ee5372f54deca287ab84d8165b57d0f4d109a86506047"
   },
   "roly/lounge_ui.py": {
-    "bytes": 4671,
-    "sha256": "bd870b7cac9fc6d73f166a5201c95ae875e3ec8f5d82a3c4844a9b0ddbeec1d4"
+    "bytes": 4549,
+    "sha256": "c1448aad54e4357c8fec4f07cd55add9cc95059936f8265a1941cec7d27d7e03"
   },
   "roly/member_cards.py": {
     "bytes": 8029,
@@ -520,8 +520,8 @@
     "sha256": "eeacc9d24232ac9e29d0108533c972f79623caaa40ccdc314dbf39148e32d6c4"
   },
   "tests/test_home_ui.py": {
-    "bytes": 19820,
-    "sha256": "36291bb9887675e253e540380df2e3d6b2d31e772f23c213d3e22983886a43b2"
+    "bytes": 19947,
+    "sha256": "4e8ce24e1d0842f9a879f3388a142a7a9b828c5eee4e5c506c588c0beb36771b"
   },
   "tests/test_live_auction.py": {
     "bytes": 40000,

@@ -117,7 +117,7 @@ class HomeUITests(unittest.TestCase):
         self.assertEqual(results, ["1 : 0" if game["winner"] == "A" else "0 : 1" for game in confirmed[:5]])
         self.assertTrue(any(caption.startswith("개설 ") for caption in captions))
 
-    def test_all_normal_records_link_clears_previous_auction_focus(self):
+    def test_browse_links_open_active_event_of_selected_kind(self):
         members = self.core.list_members()
         assignments = [{"member_id": member["id"], "role": role} for role in ROLES
             for member in [member for member in members if member["main_role"] == role][:2]]
@@ -130,11 +130,15 @@ class HomeUITests(unittest.TestCase):
         self.assertEqual(self.at.session_state["events_kind_tab"], "경매")
         self.at.switch_page("app_pages/home.py").run()
         self.at.session_state["focus_event"] = auction["id"]
-        self.at.button(key="home_normal_history").click().run()
+        self.at.button(key="home_normal_browse").click().run()
         self.assert_clean()
         self.assertEqual(self.at.session_state["events_kind_tab"], "일반내전")
         self.assertEqual(self.comp.get_event(self.at.selectbox(key="events_selection_NORMAL").value)["kind"], "NORMAL")
         self.assertFalse(any(box.key == "events_selection_AUCTION" for box in self.at.selectbox))
+        self.at.switch_page("app_pages/home.py").run()
+        self.at.button(key="home_auction_browse").click().run()
+        self.assert_clean()
+        self.assertEqual(self.comp.get_event(self.at.selectbox(key="auction_event").value)["kind"], "AUCTION")
 
     def test_pending_requests_are_visible_only_to_admin(self):
         self.core.join_member("가입대기검증#QA", "MID", "SUP")
@@ -168,7 +172,7 @@ class HomeUITests(unittest.TestCase):
         self.assertFalse(any((button.key or "").startswith("home_event_") for button in self.at.button))
         self.assertFalse(any("최근 가입 신청" in item.value for item in self.at.markdown))
 
-    def test_event_tabs_show_all_active_rows_and_separate_complete_history_without_detail_reads(self):
+    def test_tabs_show_only_active_events_without_detail_reads(self):
         base = self.comp.list_events()[0]
         summaries = []
         active_ids = {"NORMAL": [], "AUCTION": []}
@@ -191,17 +195,18 @@ class HomeUITests(unittest.TestCase):
         self.assert_clean()
         self.assertEqual([tab.label for tab in self.at.tabs], ["일반 내전", "경매 내전"])
         for tab, kind in zip(self.at.tabs, ("NORMAL", "AUCTION")):
-            kind_complete_ids = [event["id"] for event in summaries if event["kind"] == kind and event["status"] == "COMPLETED"]
             self.assertEqual([button.key for button in tab.button if (button.key or "").startswith("home_event_")],
-                             [f"home_event_{event_id}" for event_id in active_ids[kind] + kind_complete_ids])
+                             [f"home_event_{event_id}" for event_id in active_ids[kind]])
             self.assertTrue(any(f" · {10 if kind == 'NORMAL' else 20}명 · " in item.value for item in tab.caption))
-            history = next(item for item in tab.expander if item.label == "완료된 내전 4개")
-            self.assertEqual([button.key for button in history.button], [f"home_event_{event_id}" for event_id in kind_complete_ids])
+            self.assertFalse(tab.expander)
+            self.assertEqual(tab.button(key=f"home_{kind.lower()}_browse").label,
+                             "일반 내전 보러가기" if kind == "NORMAL" else "경매 내전 보러가기")
         shown = [button.key for button in self.at.button if (button.key or "").startswith("home_event_")]
-        expected = {*active_ids["NORMAL"], *active_ids["AUCTION"], *complete_ids}
+        expected = {*active_ids["NORMAL"], *active_ids["AUCTION"]}
         self.assertEqual(set(shown), {f"home_event_{event_id}" for event_id in expected})
         self.assertEqual(len(shown), len(expected))
-        self.assertEqual([item.value for item in self.at.subheader].count("내전 목록"), 1)
+        for title in ("일반 내전", "경매 내전", "내전 목록"):
+            self.assertEqual([item.value for item in self.at.subheader].count(title), 1)
         self.assertNotIn("경매 일정", [item.value for item in self.at.subheader])
 
     def test_lounge_card_opens_same_profile_page_using_saved_data(self):

@@ -4,7 +4,7 @@ from datetime import datetime
 import streamlit as st
 
 from roly.ui import context, lounge_service, ROOT, FORMATS, KINDS, STATUS
-from roly.lounge_ui import KST, WEEKDAYS, local_time, time_label, profile_dialog, creation_actions
+from roly.lounge_ui import KST, WEEKDAYS, local_time, time_label, profile_dialog, creation_action
 from roly.member_profile_page import open_member_profile
 from roly.member_cards import render_member_cards
 
@@ -54,8 +54,6 @@ with st.container(horizontal=True, horizontal_alignment="center"):
             with st.container(width="content", gap="xsmall"):
                 st.title("라운지")
                 st.caption(f"{today.year}년 {today.month}월 {today.day}일 {WEEKDAYS[today.weekday()]} · 한국 시간")
-            with st.container(width=440, key="lounge_creation_actions"):
-                creation_actions(actor)
 
         with st.container(border=True, gap="small", key="lounge_profile"):
             with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
@@ -91,31 +89,41 @@ with st.container(horizontal=True, horizontal_alignment="center"):
 
         main, side = st.columns([2.1, 1], gap="medium")
         with main:
+            for kind, label in (("NORMAL", "일반 내전"), ("AUCTION", "경매 내전")):
+                with st.container(border=True, gap="small", key=f"lounge_{kind.lower()}"):
+                    with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
+                        st.subheader(label, width="content")
+                        with st.container(width=190):
+                            creation_action(actor, kind)
+                    st.caption("10명 · 20명 · 포지션별 팀 편성" if kind == "NORMAL" else "4팀 · 6팀 · 8팀 · 팀장 지정 후 포인트 경매")
+
             with st.container(border=True, gap="small", key="lounge_events"):
                 st.subheader("내전 목록")
                 event_tabs = st.tabs(["일반 내전", "경매 내전"])
                 for tab, kind, label in zip(event_tabs, ("NORMAL", "AUCTION"), ("일반 내전", "경매 내전")):
                     with tab:
-                        visible = [event for event in active if event["kind"] == kind]
-                        visible.sort(key=lambda event: event.get("starts_at") or event["created_at"])
+                        visible = sorted(
+                            (event for event in active if event["kind"] == kind),
+                            key=lambda event: event.get("starts_at") or event["created_at"],
+                        )
                         st.caption(f"진행 중 {len(visible)}개")
                         if not visible:
                             empty_schedule(f"진행 중인 {label}이 없습니다.", f"lounge_empty_{kind.lower()}")
                         for event in visible:
                             event_row(event)
-                        if kind == "NORMAL":
-                            if st.button("일반내전 전체 기록", type="tertiary", key="home_normal_history"):
-                                st.session_state.pop("focus_event", None)
-                                st.session_state.events_kind_tab = "일반내전"
-                                st.session_state.events_active_kind = "일반내전"
+                        if st.button(f"{label} 보러가기", type="tertiary", key=f"home_{kind.lower()}_browse",
+                                     icon=":material/arrow_forward:", icon_position="right"):
+                            st.session_state.pop("focus_event", None)
+                            if visible:
+                                st.session_state.focus_event = visible[0]["id"]
+                            if kind == "AUCTION":
+                                st.switch_page("app_pages/auction.py")
+                            elif visible:
+                                st.session_state.events_kind_tab = KINDS[kind]
+                                st.session_state.events_active_kind = KINDS[kind]
                                 st.switch_page("app_pages/events.py")
-                        else:
-                            st.page_link("app_pages/auction.py", label="경매 전체 보기", icon=":material/arrow_forward:", icon_position="right")
-                        completed = [event for event in events if event["kind"] == kind and event["status"] == "COMPLETED"]
-                        if completed:
-                            with st.expander(f"완료된 내전 {len(completed)}개"):
-                                for event in completed:
-                                    event_row(event)
+                            else:
+                                st.switch_page("app_pages/normal.py")
 
             with st.container(border=True, gap="small", key="lounge_recent"):
                 st.subheader("최근 경기")
