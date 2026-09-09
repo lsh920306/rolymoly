@@ -2,6 +2,17 @@
  * Only explicit Streamlit container keys are styled. Navigation, layout,
  * widget states remain native. Member cards use an isolated CCv2 component.
  */
+[data-testid="stSidebarLogo"] {
+  width: 200px;
+  height: auto;
+  max-width: 100%;
+  max-height: none;
+  object-fit: contain;
+}
+[data-testid="stSidebarHeader"]:has([data-testid="stSidebarLogo"]) {
+  height: 90px;
+  min-height: 90px;
+}
 /* The lounge keeps its pink backdrop. Operating pages use the neutral theme. */
 [data-testid="stAppViewContainer"]:has(.st-key-page_home) {
   background-color: #fff7f7;
@@ -159,6 +170,16 @@
 
 [class*="st-key-auction_bid_card_"] [data-testid="stText"] {
   font-weight: 600;
+}
+[class*="st-key-auction_history_panel_"] {
+  min-height: 620px;
+}
+[class*="st-key-auction_bid_card_"] [data-testid="stMarkdownContainer"] strong {
+  font-size: 19px;
+  color: #142238;
+}
+[class*="st-key-auction_bid_card_"] {
+  box-shadow: 0 2px 6px rgb(20 34 56 / 3%);
 }
 /* Shared member profile: identity and rank first, compact white surfaces. */
 .st-key-profile_champions,

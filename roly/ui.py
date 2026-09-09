@@ -151,7 +151,7 @@ def event_picker(events, label="경기 선택", key="event_picker"):
 def run():
     st.set_page_config(page_title="롤리몰리", page_icon=":material/sports_esports:", layout="wide", initial_sidebar_state="expanded")
     st.html(ROOT / "static" / "app.css")
-    st.logo(str(ROOT / "static" / "wordmark.svg"), size="small")
+    st.logo(str(ROOT / "static" / "rolymoly-logo.png"), size="large")
     data_root = Path(os.environ.get("ROLYMOLY_DATA_DIR", ROOT / ".data"))
     try:
         deployment = load_deployment_config()

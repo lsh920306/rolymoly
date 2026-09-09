@@ -20,8 +20,8 @@
     "sha256": "096193e045b3f97da2f114c1523b08b579101fb9d236aef4254d23823a9e894e"
   },
   "BROWSER_PAGE_REVIEW.md": {
-    "bytes": 11090,
-    "sha256": "44a575a55d61116f57d0c0a4cd988203687116276abc9541fac7f5df22038ba3"
+    "bytes": 15817,
+    "sha256": "1f3972a5a60a9ea1ccdca24774d9924bf29085d4457cd8099e190c744338797e"
   },
   "CLEANUP_REPORT.md": {
     "bytes": 3714,
@@ -44,12 +44,12 @@
     "sha256": "6817903c95b4ea17cb451bf7f9a7708094f39e7fe5232d2a7648ea4559f09596"
   },
   "DEPLOYMENT.md": {
-    "bytes": 45114,
-    "sha256": "7356ab8cadc863a0ba247fbdd93096593dc096d35eca425cdcbd9a816489c180"
+    "bytes": 49505,
+    "sha256": "70dbec7550fcfa434dd98a2bb2bdf565474ffaa1deb0af5f5adea02125e558de"
   },
   "DEPLOYMENT_VERIFICATION_REPORT.md": {
-    "bytes": 17906,
-    "sha256": "67d36819d17aa70c0728c7ff8ad3300a2157fbffc41bae87621d53e25631c143"
+    "bytes": 21732,
+    "sha256": "407c96a4ec4088429d9c0c182bd67bc3b5bb93528700ed5c583a23e2b4828478"
   },
   "DESIGN.md": {
     "bytes": 17866,
@@ -136,8 +136,8 @@
     "sha256": "31a507ae8b4143b3877183e271467dbe2d0613fa6734d8783a49a9dd4ec20dcf"
   },
   "roly/auction_ui.py": {
-    "bytes": 38727,
-    "sha256": "622869bc7f707320deb2b9be5dd39e224c5409f95842264934174cb15699d7a5"
+    "bytes": 41088,
+    "sha256": "da7a0d9c41b9aa67f9bb741b21d70ba244cb548e69e886ce0a231ae1a148ae99"
   },
   "roly/auth.py": {
     "bytes": 16529,
@@ -252,8 +252,8 @@
     "sha256": "0ee2230e11aa7f9ddae14367e25e5584377f5ec23d16473b4999e0a79e884831"
   },
   "roly/ui.py": {
-    "bytes": 20327,
-    "sha256": "146407c01a6cd7b26c8a0cb8e3ea0b1b95a0b04195fa6b9919f639e73d9d7ea6"
+    "bytes": 20331,
+    "sha256": "1e0df15c47657df2a1e27fb167616734733c87369a8421443226e6dfbdb85f4b"
   },
   "run.bat": {
     "bytes": 147,
@@ -316,8 +316,8 @@
     "sha256": "9599f12fd42fc0bce1cd50b47a0c022e108d7aa64dd0d1bb0ed44f3282d900b4"
   },
   "static/app.css": {
-    "bytes": 12247,
-    "sha256": "b4a2b9696ff327bdb537fb44787632a1943462656b5146ee654fe430e80e326c"
+    "bytes": 12752,
+    "sha256": "ef28b84dbcfc340046e380a3a2351f99abc109bf22e1646b7c9e9745a6ca75b0"
   },
   "static/demo-riot-profiles.json": {
     "bytes": 34177,
@@ -327,6 +327,10 @@
     "bytes": 4190,
     "sha256": "15cefa3d47194b05c658b0839db081662ebdf11977d25a49b28ae53149230b80"
   },
+  "static/rolymoly-logo.png": {
+    "bytes": 1654834,
+    "sha256": "413d162265fcf054ebcbefc1c55d8943eb270391084c9bcec9dae5c8d3c22a87"
+  },
   "static/rolymoly-poster-SOURCE.md": {
     "bytes": 504,
     "sha256": "021bf87ea92704e2349a8f0a03fe0128f13c5c14a81ccf88400535472c3f3b04"
@@ -334,10 +338,6 @@
   "static/rolymoly-poster.png": {
     "bytes": 3035576,
     "sha256": "04f179bdb2038a583bbd11ba77d799d0a9a809be4555a728e7215a079ff58da1"
-  },
-  "static/wordmark.svg": {
-    "bytes": 303,
-    "sha256": "4d6585d1dd2d286b76dbea5e68415c2afbf9248b9863eca7ace33de8ca9a36d2"
   },
   "streamlit_app.py": {
     "bytes": 108,
@@ -359,9 +359,13 @@
     "bytes": 33989,
     "sha256": "aa502c65bf341d50490dd5de1e672b1c7b5813ce2d72d246894f9e71e292b74d"
   },
+  "tests/test_auction_dialog_lifecycle.py": {
+    "bytes": 5145,
+    "sha256": "506a4eb44ce118fa18ce9d8736fc2328643c63d0173d944d109adcd2f92a274d"
+  },
   "tests/test_auction_latency.py": {
-    "bytes": 8401,
-    "sha256": "f706315741b6e9d536305f9315877afa20f61f367c3d39af40b063cb6db75ea5"
+    "bytes": 8447,
+    "sha256": "a242415e9a74310d3f0c3a8013857cbc055fad714fea4d7636ed44486dc57cc3"
   },
   "tests/test_auction_reset.py": {
     "bytes": 14883,
@@ -394,6 +398,10 @@
   "tests/test_backup_storage.py": {
     "bytes": 16007,
     "sha256": "71c7455f01b47d10541b1fac1cd38e79d93b97e11ecba5cbe9e3bd4bca755abd"
+  },
+  "tests/test_bid_draft.py": {
+    "bytes": 4891,
+    "sha256": "8d239618ddaed888250e9ddcf06bc886a3e30233e25e1dfa7d8adcf87583841d"
   },
   "tests/test_bid_recovery.py": {
     "bytes": 5894,
