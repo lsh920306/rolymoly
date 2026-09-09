@@ -23,6 +23,15 @@ core = Core(st.session_state.db_path)
 actor = core.session(st.session_state.token)
 member_edit_form(core, st.session_state.token, actor, st.session_state.member_id, prefix="qa")
 '''
+DIALOG_EDITOR = '''
+import streamlit as st
+from roly.core import Core
+from roly.member_editor import show_member_editor
+core = Core(st.session_state.db_path)
+actor = core.session(st.session_state.token)
+st.session_state.editor_page_runs = st.session_state.get("editor_page_runs", 0) + 1
+show_member_editor(core, st.session_state.token, actor, st.session_state.member_id)
+'''
 
 
 class MemberProfileUITests(unittest.TestCase):
@@ -50,8 +59,8 @@ class MemberProfileUITests(unittest.TestCase):
         self.assertEqual(len(matches), 1, label)
         return matches[0]
 
-    def editor(self, token=None):
-        app = AppTest.from_string(EDITOR, default_timeout=30)
+    def editor(self, token=None, *, dialog=False):
+        app = AppTest.from_string(DIALOG_EDITOR if dialog else EDITOR, default_timeout=30)
         for key, value in {"db_path": self.core.db_path, "token": token or self.token, "member_id": self.mid}.items():
             app.session_state[key] = value
         app.run()
@@ -83,7 +92,7 @@ class MemberProfileUITests(unittest.TestCase):
         self.assertEqual((actor["member_id"], actor["username"], actor["display_name"]), (self.mid, "member", "Renamed#QA"))
 
     def test_stale_edit_is_blocked_and_reload_discards_old_fields(self):
-        app = self.editor()
+        app = self.editor(dialog=True)
         self.widget(app, "text_input", "클랜 티어").set_value("old unsaved tier")
         self.widget(app, "number_input", "기본점수").set_value(999)
         self.widget(app, "text_input", "정보 변경 사유").set_value("old form")
@@ -94,13 +103,24 @@ class MemberProfileUITests(unittest.TestCase):
         self.healthy(app)
         self.assertTrue(self.widget(app, "button", "회원 정보 저장").disabled)
         self.assertEqual(self.core.get_member(self.mid)["score"], 240)
+        runs_before_reload = app.session_state.editor_page_runs
         self.widget(app, "button", "최신 회원 정보 불러오기").click().run()
         self.healthy(app)
+        self.assertLessEqual(app.session_state.editor_page_runs - runs_before_reload, 1,
+                             "Loading the reviewed version must not restart the outer page again")
+        self.assertTrue(app.get("dialog"))
         self.assertEqual(self.widget(app, "text_input", "Riot ID").value, "OtherAdmin#QA")
         self.assertEqual(self.widget(app, "text_input", "클랜 티어").value, "클랜 플래티넘")
         self.assertEqual(self.widget(app, "number_input", "기본점수").value, 240)
         self.assertEqual(self.widget(app, "text_input", "정보 변경 사유").value, "")
         self.assertFalse(self.widget(app, "button", "회원 정보 저장").disabled)
+        self.widget(app, "text_input", "클랜 티어").set_value("최신 확인 티어")
+        self.widget(app, "text_input", "정보 변경 사유").set_value("최신 신청 확인 후 수정")
+        self.widget(app, "button", "회원 정보 저장").click().run()
+        self.healthy(app)
+        member = self.core.get_member(self.mid)
+        self.assertEqual((member["riot_id"], member["base_score"], member["clan_tier"]),
+                         ("OtherAdmin#QA", 240, "최신 확인 티어"))
 
     def test_member_cannot_edit_and_public_list_has_only_public_tiers(self):
         editor = self.editor(self.member_token)

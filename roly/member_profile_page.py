@@ -7,7 +7,7 @@ import streamlit as st
 from .core import integer
 from .member_records import korean_time, member_records, saved_tier
 from .riot_profile import member_profiles
-from .ui import ROLE_NAMES, award_label
+from .ui import ROLE_NAMES, STATUS, award_label
 
 
 def open_member_profile(member_id, *, origin="members"):
@@ -87,3 +87,18 @@ def render_profile(core, token, actor, member_id):
                            "점수 증감": game["delta"]} for game in data["games"][:50]], hide_index=True)
         else:
             st.caption("아직 확정된 경기 기록이 없습니다.")
+        if data["tournaments"]:
+            st.markdown("**팀·낙찰 이력**")
+            st.dataframe([
+                {"구분": "일반내전" if item["kind"] == "NORMAL" else "경매",
+                 "내전·경매": item["title"], "상태": STATUS.get(item["status"], item["status"]),
+                 "팀": item["team_name"] or "미배정",
+                 "역할": "팀장" if item["captain_id"] == member_id else "선수",
+                 "당시 Riot ID": item["riot_id"],
+                 "당시 클랜 티어": saved_tier(item["clan_tier_snapshot"]),
+                 "당시 현재 티어": saved_tier(item["current_tier_snapshot"], item["current_tier_lp_snapshot"]),
+                 "포지션": ROLE_NAMES[item["role"]], "당시 전력": item["score"],
+                 "낙찰 포인트": f"{item['price']:,} P" if item["kind"] == "AUCTION" and item["captain_id"] != member_id and item["team_name"] else "—"}
+                for item in data["tournaments"]
+            ], hide_index=True, width="stretch")
+            st.caption("당시 이름·티어·전력과 팀 배정은 저장된 명단을 표시합니다. 일반내전·팀장·미배정 선수에게 낙찰 포인트를 표시하지 않습니다.")

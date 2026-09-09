@@ -56,17 +56,30 @@ if st.session_state.get("live_reset_event"):
         f = self.f
         old_lot = self.sale()
         app = f.app(f.admin)
+        notice_key = f"live_notice_{f.event_id}"
+        other_notice_key = f"live_notice_{f.event_id + 1}"
+        stale_notice = {"success": False, "message": "진행 중인 경매만 일시정지할 수 있습니다.",
+                        "lot_id": None, "token": f.admin}
+        app.session_state[notice_key] = stale_notice.copy()
+        app.session_state[other_notice_key] = stale_notice.copy()
+        app.run()
+        self.assertTrue(any(item.value == stale_notice["message"] for item in app.error))
         before = f.state()
         f.click(app, "경매 초기화")
         f.click(app, "경매 초기화 확정")
         after = f.state()
         self.assertEqual((after["status"], after["event"]["status"]), ("READY", "AUCTION_READY"))
+        self.assertNotIn(notice_key, app.session_state)
+        self.assertEqual(app.session_state[other_notice_key], stale_notice)
+        self.assertFalse(app.error)
         self.assertEqual(after["teams"][0]["remaining"], before["teams"][0]["remaining"] + 40)
         self.assertEqual(after["bids"], before["bids"])
         self.assertEqual(next(lot for lot in after["lots"] if lot["id"] == old_lot["id"])["status"], "CANCELLED")
         self.assertFalse(f.widget(app, "button", "경매 시작").disabled)
         f.click(app, "경매 시작")
         self.assertEqual(f.state()["status"], "RUNNING")
+        self.assertFalse(app.error)
+        self.assertNotIn(notice_key, app.session_state)
         self.assertNotEqual(f.state()["current_lot"]["id"], old_lot["id"])
         self.assertTrue(any(item.label == "초기화·취소 전 입찰 기록" for item in app.expander))
         self.assertTrue(any(item.value == "접수된 입찰이 없습니다." for item in app.caption))

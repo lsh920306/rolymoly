@@ -334,7 +334,8 @@ def run():
             st.Page("app_pages/events.py", title="경기 기록", icon=":material/emoji_events:"),
             st.Page("app_pages/join.py", title="내 계정" if actor else "가입 신청", icon=":material/person_add:"),
         ],
-        "관리": [st.Page("app_pages/admin.py", title="운영 관리", icon=":material/tune:")],
+        "관리": [st.Page("app_pages/admin.py", title="운영 관리", icon=":material/tune:",
+                        visibility="visible" if actor and actor["role"] == "admin" else "hidden")],
     }, position="sidebar", expanded=True)
     if page.url_path != "auction":
         st.session_state.pop("live_overview_event", None)

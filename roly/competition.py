@@ -368,12 +368,47 @@ class Competition:
             self._audit(conn, event_id, actor, "CREATE", f"{len(captain_ids)}팀 경매, {format_name}")
             return event_id
 
-    def swap_players(self, token, event_id, first_member_id, second_member_id, reason="팀 균형 조정"):
+    def swap_players(self, token, event_id, first_member_id, second_member_id, reason="팀 균형 조정",
+                     *, expected_roster_token=None, request_id=None):
+        """Swap once for a reviewed UI request; retain the legacy internal API."""
+        guarded = expected_roster_token is not None or request_id is not None
+        reason = str(reason).strip()
+        if guarded:
+            from roly.core import integer
+            event_id, first_member_id, second_member_id = (integer(value) for value in
+                (event_id, first_member_id, second_member_id))
+            try:
+                parsed = UUID(str(request_id))
+                if not parsed.int:
+                    raise ValueError()
+                request_id = str(parsed)
+            except (ValueError, AttributeError, TypeError):
+                raise ValueError("유효한 선수 교환 요청 번호(UUID)가 필요합니다.") from None
+            if (not isinstance(expected_roster_token, str) or len(expected_roster_token) != 64
+                    or not reason or len(reason) > 1000):
+                raise ValueError("최신 교환 명단과 1~1,000자의 교환 사유를 확인해 주세요.")
         with self.service.transaction() as conn:
             actor = self._authorize(conn, token, event_id)
+            if guarded:
+                payload_hash = sha256(json.dumps([actor["id"], event_id, first_member_id,
+                    second_member_id, reason, expected_roster_token], ensure_ascii=False).encode()).hexdigest()
+                # Like sale corrections, low-volume swap receipts belong to the
+                # append-only audit. Replay precedes the changed-roster check.
+                pattern = '%"request_id": "' + request_id + '"%'
+                for row in conn.execute("SELECT detail FROM competition_audit WHERE action='SWAP' AND detail LIKE ?", (pattern,)):
+                    try:
+                        previous = json.loads(row["detail"])
+                    except (ValueError, TypeError):
+                        continue  # Historical swaps contain plain text.
+                    if isinstance(previous, dict) and previous.get("request_id") == request_id:
+                        if previous.get("payload_hash") != payload_hash:
+                            raise ValueError("같은 요청 번호로 다른 선수 교환을 전송할 수 없습니다.")
+                        return {**previous["result"], "replayed": True}
             event = self._event(conn, event_id)
             if event["kind"] != "NORMAL" or event["status"] != "READY":
                 raise ValueError("일반내전 첫 경기 시작 전에만 선수를 교환할 수 있습니다.")
+            if guarded:
+                self._check_roster_token(conn, event_id, expected_roster_token)
             first = self._player(conn, event_id, first_member_id)
             second = self._player(conn, event_id, second_member_id)
             if conn.execute("SELECT 1 FROM competition_teams WHERE event_id=? AND captain_id IN (?,?)", (event_id, first_member_id, second_member_id)).fetchone():
@@ -382,7 +417,15 @@ class Competition:
                 raise ValueError("다른 팀의 같은 포지션 선수끼리 교환해 주세요.")
             conn.execute("UPDATE competition_players SET team_id=? WHERE id=?", (second["team_id"], first["id"]))
             conn.execute("UPDATE competition_players SET team_id=? WHERE id=?", (first["team_id"], second["id"]))
-            self._audit(conn, event_id, actor, "SWAP", f"{first_member_id} ↔ {second_member_id}: {str(reason).strip()}")
+            summary = f"{first['riot_id']} ↔ {second['riot_id']}: {reason}"
+            if guarded:
+                result = {"event_id": event_id, "first_member_id": first_member_id,
+                          "second_member_id": second_member_id, "first_team_id": second["team_id"],
+                          "second_team_id": first["team_id"], "replayed": False}
+                self._audit(conn, event_id, actor, "SWAP", json.dumps({"request_id": request_id,
+                    "payload_hash": payload_hash, "summary": summary, "result": result}, ensure_ascii=False))
+                return result
+            self._audit(conn, event_id, actor, "SWAP", summary)
 
     def _auction_open(self, conn, event_id):
         self._guard_live(conn, event_id)

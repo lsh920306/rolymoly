@@ -1,5 +1,6 @@
 """Exercise the real multipage entrypoint with disposable demonstration data."""
 import os
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -117,6 +118,48 @@ class EventsUITests(unittest.TestCase):
         self.assert_clean()
         self.assertEqual(self.at.session_state[base_key]["token"], changed["roster_token"])
         self.assertFalse(self.at.button(key=f"events_roster_save_{event_id}").disabled)
+
+    def test_structured_audit_rows_show_readable_summaries_and_preserve_raw_records(self):
+        event_id = self.new_normal()
+        entries = [
+            ("RESET", {"reason": "초기화 확인", "sold_count": 2, "request_id": "internal-request",
+                       "payload_hash": "internal-hash", "result": {"refund_total": 42, "member_ids": [11, 12]},
+                       "before": {"snapshot": "internal-snapshot"}}),
+            ("SALE_CORRECTION", {"reason": "금액과 팀 정정", "before": {"team_id": 1, "team_name": "이전 팀", "amount": 42},
+                                 "after": {"team_id": 2, "team_name": "정정 팀", "amount": 0}, "result": {"member_id": 11}}),
+            ("SALE_CORRECTION", {"reason": "낙찰 취소 확인", "before": {"team_id": 2, "team_name": "정정 팀", "amount": 0},
+                                 "after": {"team_id": None, "team_name": None, "amount": 0}, "result": {"member_id": 11}}),
+            ("NORMAL_ROSTER_REPLACE", {"reason": "확정 명단 변경", "balanced": True,
+                "before": {"players": [{"member_id": 11, "riot_id": "유지#QA", "role": "TOP"},
+                                         {"member_id": 12, "riot_id": "제외#QA", "role": "JG"}]},
+                "after": [{"member_id": 11, "riot_id": "유지#QA", "role": "JG"},
+                          {"member_id": 13, "riot_id": "추가#QA", "role": "TOP"}]}),
+            ("PREPARATION_REOPENED", {"reason": "준비 다시 확인", "players": [{"member_id": 11}, {"member_id": 12}],
+                                     "live_settings": {"snapshot": "internal-snapshot"}}),
+            ("SWAP", {"summary": "같은 포지션 선수 교환 완료", "request_id": "internal-request", "result": {}}),
+            ("BID", "이전 평문 낙찰 기록 · 선수 11 · 25 포인트"),
+            ("RESET", '{"reason":"형식 미확인","result":null}'),
+            ("PREPARATION_REOPENED", '{"reason":"옛 형식","players":"원문 보존"}'),
+        ]
+        with self.core.transaction() as db:
+            actor = self.core.session(self.token, db)
+            for action, detail in entries:
+                self.comp._audit(db, event_id, actor, action,
+                                 json.dumps(detail, ensure_ascii=False) if isinstance(detail, dict) else detail)
+        before = self.comp.get_event(event_id)["audit"]
+        self.choose(event_id)
+        table = next(frame.value for frame in self.at.dataframe if list(frame.value.columns) == ["시각", "작업", "내용"])
+        contents = "\n".join(table["내용"])
+        for expected in ("낙찰 2명 해제", "42 P 환불", "선수 2명 경매 준비", "선수 #11", "이전 팀 42 P → 정정 팀 0 P",
+                         "낙찰 취소·재경매 대기", "합류: 추가#QA", "제외: 제외#QA", "포지션 변경 1명",
+                         "참가 명단 2명 보존", "사유: 준비 다시 확인", "같은 포지션 선수 교환 완료"):
+            self.assertIn(expected, contents)
+        self.assertTrue({"경매 초기화", "낙찰 정정", "일반내전 명단 재편성", "참가 명단 다시 준비", "선수 교환"}.issubset(set(table["작업"])))
+        self.assertNotIn("internal-", contents)
+        for _, detail in entries:
+            if isinstance(detail, str):
+                self.assertIn(detail, table["내용"].tolist())
+        self.assertEqual(self.comp.get_event(event_id)["audit"], before)
 
     def test_old_normal_result_form_rejects_swap_then_explicit_reload_scores_current_roster(self):
         event_id = self.new_normal()
@@ -322,6 +365,12 @@ class EventsUITests(unittest.TestCase):
         self.assertEqual(self.core.get_game(core_game_id), core_game_before)
         self.assertEqual({member_id: self.core.get_member(member_id)["award_units"] for member_id in member_ids}, award_units_before)
         self.assertTrue(any(row["action"] == "CLOSE_UNFINISHED" and "참가자 이탈" in row["detail"] for row in closed["audit"]))
+        audit_table = next(table.value for table in self.at.dataframe if list(table.value.columns) == ["시각", "작업", "내용"])
+        summary = audit_table.loc[audit_table["작업"] == "기록 보존·중단 종료", "내용"].iloc[0]
+        self.assertIn("확정 1경기 보존", summary)
+        self.assertIn("남은 2경기 중단", summary)
+        self.assertIn("사유: 참가자 이탈로 남은 경기 진행 불가", summary)
+        self.assertNotIn('"core_games"', summary)
         self.assertEqual(self.at.session_state["events_kind_tab"], "경매")
 
         self.at.session_state["token"] = None

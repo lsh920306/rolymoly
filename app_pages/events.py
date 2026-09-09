@@ -1,5 +1,9 @@
 """Competition progress, frozen rosters, and individual game records."""
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+import json
+import sqlite3
+from uuid import uuid4
 
 import streamlit as st
 
@@ -48,6 +52,92 @@ def fixture_rows(games):
 
 def clear_revision_preview():
     st.session_state.pop("events_revision_preview", None)
+
+
+def save_reviewed_swap(competition, token, event_id, review, body, context_key):
+    try:
+        result = competition.swap_players(token, event_id, **body,
+            expected_roster_token=review["token"], request_id=review["request_id"])
+    except sqlite3.OperationalError:
+        review["retry_body"] = dict(body)
+        raise
+    st.session_state.pop(context_key, None)
+    return result
+
+
+def audit_detail(row):
+    """Summarize known receipts while preserving older plain-text records."""
+    try:
+        detail = json.loads(row["detail"])
+        if not isinstance(detail, dict):
+            return row["detail"]
+        action = row["action"]
+        if action == "SWAP" and isinstance(detail.get("summary"), str):
+            return detail["summary"]
+        if action not in ("RESET", "SALE_CORRECTION", "NORMAL_ROSTER_REPLACE", "PREPARATION_REOPENED", "CLOSE_UNFINISHED"):
+            return row["detail"]
+        reason = detail["reason"]
+        if not isinstance(reason, str):
+            return row["detail"]
+
+        def number(value):
+            if type(value) is not int:
+                raise ValueError("Unknown audit number")
+            return f"{value:,}"
+
+        def records(value):
+            if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+                raise ValueError("Unknown audit records")
+            return value
+
+        def names(players):
+            labels = [str(player.get("riot_id") or f"선수 #{player['member_id']}") for player in players]
+            return ", ".join(labels[:5]) + (f" 외 {len(labels) - 5}명" if len(labels) > 5 else "")
+
+        if action == "RESET":
+            result = detail["result"]
+            if not isinstance(result["member_ids"], list) or any(type(mid) is not int for mid in result["member_ids"]):
+                return row["detail"]
+            summary = (f"낙찰 {number(detail['sold_count'])}명 해제 · {number(result['refund_total'])} P 환불 · "
+                       f"선수 {len(result['member_ids'])}명 경매 준비")
+        elif action == "SALE_CORRECTION":
+            before, after = detail["before"], detail["after"]
+            previous_team = before.get("team_name") or f"팀 #{before['team_id']}"
+            previous = f"{previous_team} {number(before['amount'])} P"
+            if after["team_id"] is None:
+                following = "낙찰 취소·재경매 대기"
+            else:
+                following = f"{after.get('team_name') or '팀 #' + str(after['team_id'])} {number(after['amount'])} P"
+            summary = f"선수 #{number(detail['result']['member_id'])} · {previous} → {following}"
+        elif action == "NORMAL_ROSTER_REPLACE":
+            before, after = records(detail["before"]["players"]), records(detail["after"])
+            if not isinstance(detail["balanced"], bool):
+                return row["detail"]
+            old = {player["member_id"]: player for player in before}
+            new = {player["member_id"]: player for player in after}
+            added = [player for mid, player in new.items() if mid not in old]
+            removed = [player for mid, player in old.items() if mid not in new]
+            changed_roles = sum(old[mid]["role"] != player["role"] for mid, player in new.items() if mid in old)
+            parts = [f"참가 명단 {len(before)}명 → {len(after)}명",
+                     "전력 기준 팀 재편성" if detail["balanced"] else "선택 순서로 팀 재편성"]
+            if added:
+                parts.append(f"합류: {names(added)}")
+            if removed:
+                parts.append(f"제외: {names(removed)}")
+            if changed_roles:
+                parts.append(f"포지션 변경 {changed_roles}명")
+            summary = " · ".join(parts)
+        elif action == "PREPARATION_REOPENED":
+            summary = f"참가 명단 {len(records(detail['players']))}명 보존 · 팀장·팀·경매 설정 다시 준비"
+        else:
+            confirmed = sum(game["status"] == "CONFIRMED" for game in records(detail["core_games"]))
+            pending = sum(game["status"] == "PENDING" for game in records(detail["fixtures"]))
+            summary = f"확정 {confirmed}경기 보존 · 남은 {pending}경기 중단 · 점수·낙찰 내역 유지 · 우승 보상 없음"
+        return f"{summary} · 사유: {reason}"
+    except (ValueError, TypeError, KeyError, AttributeError):
+        # Unknown historical formats remain readable without altering the audit.
+        pass
+    return row["detail"]
 
 
 def result_context(event, game_id, actor, mode="result"):
@@ -337,25 +427,51 @@ with selected_tab:
                         perform(replace_roster, "변경된 명단으로 팀과 대진을 다시 편성했습니다.")
                 with st.expander("같은 포지션 선수 교환"):
                     st.caption("첫 경기 결과를 저장하기 전, 다른 팀의 같은 포지션 선수끼리 교환할 수 있습니다.")
-                    player_map = {player["member_id"]: player for player in event["players"]}
-                    first_id = st.selectbox("교환할 선수", list(player_map), format_func=lambda member_id: f"{player_map[member_id]['riot_id']} · {team_names[player_map[member_id]['team_id']]}", key=f"events_swap_first_{event_id}")
+                    database_key = sha256(str(core.db_path).encode()).hexdigest()[:12]
+                    swap_key = f"events_swap_base_{database_key}_{event_id}_{actor['id']}"
+                    st.session_state.setdefault(swap_key, {"token": event["roster_token"],
+                        "players": event["players"], "team_names": team_names, "request_id": str(uuid4())})
+                    swap_review = st.session_state[swap_key]
+                    swap_stale = swap_review["token"] != event["roster_token"]
+                    retry_body = swap_review.get("retry_body")
+                    if retry_body:
+                        st.warning("교환 응답을 받지 못했습니다. 처음 제출한 교환의 처리 결과를 다시 확인해 주세요.")
+                        if st.button("교환 처리 결과 다시 확인", key=f"events_swap_retry_{event_id}"):
+                            perform(lambda: save_reviewed_swap(competition, token, event_id, swap_review,
+                                retry_body, swap_key), "선수 교환 처리 결과를 확인했습니다.")
+                    elif swap_stale:
+                        st.warning("명단이나 진행 상태가 변경되었습니다. 최신 교환 명단을 확인한 뒤 다시 선택해 주세요.")
+                    if swap_stale or retry_body:
+                        if st.button("최신 교환 명단 불러오기", key=f"events_swap_reload_{event_id}"):
+                            st.session_state.pop(swap_key, None)
+                            st.rerun()
+                    swap_blocked = swap_stale or bool(retry_body)
+                    player_map = {player["member_id"]: player for player in swap_review["players"]}
+                    swap_team_names = swap_review["team_names"]
+                    first_id = st.selectbox("교환할 선수", list(player_map), format_func=lambda member_id: f"{player_map[member_id]['riot_id']} · {swap_team_names[player_map[member_id]['team_id']]}", key=f"events_swap_first_{event_id}", disabled=swap_blocked)
                     first_player = player_map[first_id]
-                    candidates = [player["member_id"] for player in event["players"] if player["role"] == first_player["role"] and player["team_id"] != first_player["team_id"]]
-                    second_id = st.selectbox("맞교환할 선수", candidates, format_func=lambda member_id: f"{player_map[member_id]['riot_id']} · {team_names[player_map[member_id]['team_id']]}", key=f"events_swap_second_{event_id}_{first_id}")
-                    swap_reason = st.text_input("교환 사유", value="팀 균형 조정", key=f"events_swap_reason_{event_id}")
-                    if st.button("선수 교환", key=f"events_swap_{event_id}"):
+                    candidates = [player["member_id"] for player in swap_review["players"] if player["role"] == first_player["role"] and player["team_id"] != first_player["team_id"]]
+                    second_id = st.selectbox("맞교환할 선수", candidates, format_func=lambda member_id: f"{player_map[member_id]['riot_id']} · {swap_team_names[player_map[member_id]['team_id']]}", key=f"events_swap_second_{event_id}_{first_id}", disabled=swap_blocked)
+                    swap_reason = st.text_input("교환 사유", value="팀 균형 조정", max_chars=1000, key=f"events_swap_reason_{event_id}", disabled=swap_blocked)
+                    if st.button("선수 교환", key=f"events_swap_{event_id}", disabled=swap_blocked) and not swap_blocked:
                         if not swap_reason.strip():
                             st.error("교환 사유를 입력해 주세요.")
                         else:
-                            perform(lambda: competition.swap_players(token, event_id, first_id, second_id, swap_reason), "같은 포지션 선수를 교환했습니다.")
+                            perform(lambda: save_reviewed_swap(competition, token, event_id, swap_review,
+                                {"first_member_id": first_id, "second_member_id": second_id, "reason": swap_reason}, swap_key),
+                                "같은 포지션 선수를 교환했습니다.")
             roster_rows = [{"팀": team_names.get(player["team_id"], "미배정"), "Riot ID": player["riot_id"],
                 "포지션": ROLE_NAMES[player["role"]], **profile_snapshot_columns(player), "편성 당시 전력": player["score"], "낙찰가": player["price"]}
                 for player in event["players"]]
             st.download_button(f"{kind_label} 명단 CSV 다운로드", core.csv_bytes(roster_rows), file_name=f"rolymoly_event_{event_id}_roster.csv", mime="text/csv", icon=":material/download:")
             with st.expander(f"{kind_label} 변경 기록"):
                 actions = {"CREATE": f"{kind_label} 개설", "UNSOLD": "유찰", "BID": "낙찰", "MOVE": "재배정", "ROLE": "포지션 변경",
-                    "SWAP": "선수 교환", "AUCTION_FINALIZE": "경매 확정", "TIEBREAK": "추가 경기", "RESULT": "결과 저장", "RESULT_CASCADE": "후속 경기 포함 결과 정정", "FINALIZE": f"{kind_label} 종료", "CANCEL": f"{kind_label} 취소", "CLOSE_UNFINISHED": "기록 보존·중단 종료", "PREPARATION_REOPENED": "참가 명단 다시 준비"}
-                st.dataframe([{"시각": korean_time(row["created_at"]), "작업": actions.get(row["action"], row["action"]), "내용": row["detail"]}
+                    "SWAP": "선수 교환", "AUCTION_FINALIZE": "경매 확정", "TIEBREAK": "추가 경기", "RESULT": "결과 저장", "RESULT_CASCADE": "후속 경기 포함 결과 정정", "FINALIZE": f"{kind_label} 종료", "CANCEL": f"{kind_label} 취소", "CLOSE_UNFINISHED": "기록 보존·중단 종료", "PREPARATION_REOPENED": "참가 명단 다시 준비",
+                    "RESET": "경매 초기화", "SALE_CORRECTION": "낙찰 정정", "NORMAL_ROSTER_REPLACE": "일반내전 명단 재편성",
+                    "CREATE_DRAFT": f"{kind_label} 준비 개설", "DETAILS": "내전 정보 수정", "STAGE": "진행 단계 변경",
+                    "PARTICIPANTS": "참가 명단 변경", "AUTO_BALANCE": "전력 기준 팀 편성", "ASSIGN": "선수 배정",
+                    "UNASSIGN": "선수 배정 해제", "PARTICIPANT_WARNING": "참가자 경고"}
+                st.dataframe([{"시각": korean_time(row["created_at"]), "작업": actions.get(row["action"], row["action"]), "내용": audit_detail(row)}
                     for row in event["audit"]], hide_index=True)
 
     with history_tab:

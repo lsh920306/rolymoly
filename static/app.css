@@ -123,6 +123,9 @@
   font-weight: 600;
 }
 /* Shared member profile: identity and rank first, compact white surfaces. */
+.st-key-profile_champions,
+.st-key-page_profile [data-testid="stExpander"],
+.st-key-page_members [data-testid="stExpander"] { background:#fff; }
 .roly-member-profile { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:24px; border:1px solid #f0dede; border-left:4px solid #e34442; border-radius:14px; background:#fff; color:#142238; }
 .roly-member-profile .profile-identity { display:flex; align-items:center; gap:16px; min-width:0; }
 .roly-member-profile h1 { margin:0 0 6px; padding:0; font-size:26px; line-height:1.3; overflow-wrap:anywhere; }

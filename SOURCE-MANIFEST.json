@@ -19,6 +19,10 @@
     "bytes": 20677,
     "sha256": "096193e045b3f97da2f114c1523b08b579101fb9d236aef4254d23823a9e894e"
   },
+  "BROWSER_PAGE_REVIEW.md": {
+    "bytes": 7206,
+    "sha256": "eb5914340d71c06a57d6386ccdc531b9eab279135d4d6c9efb2ca1abc48b8253"
+  },
   "CLEANUP_REPORT.md": {
     "bytes": 3714,
     "sha256": "095e17fe43383c8e269deba225d54579a75de3472f3a8cf7b8d3e3d62066c186"
@@ -40,12 +44,12 @@
     "sha256": "6817903c95b4ea17cb451bf7f9a7708094f39e7fe5232d2a7648ea4559f09596"
   },
   "DEPLOYMENT.md": {
-    "bytes": 41570,
-    "sha256": "3822d62118d61a5627508aeeb164183256507343a782abf5419e0caf582c9618"
+    "bytes": 43473,
+    "sha256": "821bd14cbbbd60a7e0d39c3bf244ef7ea14d3b9f16401cf5078200e32f3f15c9"
   },
   "DEPLOYMENT_VERIFICATION_REPORT.md": {
-    "bytes": 13864,
-    "sha256": "d2d9c213ff2fb5dd906919ad1a7200d4f0667c32442912459e7a369061a9c01b"
+    "bytes": 13887,
+    "sha256": "def1e5163506f0fc1185faad961dc5b4e6f5de5acd7e4ecba90f3a7a01b9e0d4"
   },
   "DESIGN.md": {
     "bytes": 17866,
@@ -92,8 +96,8 @@
     "sha256": "c55951e6e582890f177e92b4f7d294548bc82b51bb4e62ea40b3209a526810d3"
   },
   "app_pages/events.py": {
-    "bytes": 32473,
-    "sha256": "eb4cfcb55af88ee7574e7a2994c610e698f838502c5335d44f4380ea9a644910"
+    "bytes": 39581,
+    "sha256": "f1b457bf4f9f3864be6968c34faf2aa167f3fb01edcd2173ac774c5b7c6d90ea"
   },
   "app_pages/home.py": {
     "bytes": 11898,
@@ -104,8 +108,8 @@
     "sha256": "3c3f55c5a9fc0c1da000a4dd0b981eeee6cfe13aadb9d1a863e4fc2269b43efa"
   },
   "app_pages/members.py": {
-    "bytes": 4391,
-    "sha256": "e7a3467e199865f96e348f216963f321dade3769853dfca2236b646f1940f734"
+    "bytes": 4461,
+    "sha256": "a38a15a87850319921e6c2921469d3d59377cf43818fc9536d7c3ab478cc0e93"
   },
   "app_pages/normal.py": {
     "bytes": 4119,
@@ -132,8 +136,8 @@
     "sha256": "31a507ae8b4143b3877183e271467dbe2d0613fa6734d8783a49a9dd4ec20dcf"
   },
   "roly/auction_ui.py": {
-    "bytes": 38129,
-    "sha256": "c8680281b971a4d14639243d0a5ac5a5d51ac8d11512d89e56ae31701d188943"
+    "bytes": 38195,
+    "sha256": "cf71fe699a14d40edeffaf943b86c5927c2879c65111370847f268abacd6d099"
   },
   "roly/auth.py": {
     "bytes": 16529,
@@ -144,8 +148,8 @@
     "sha256": "86d0e272350b582d3eb14f9c4fd4416a723d2743b372803c3156a730061ca572"
   },
   "roly/competition.py": {
-    "bytes": 61560,
-    "sha256": "a3ab238636211bfad825f6918cc5c43ba03ef3d743d24cf9f48eaec5a17f5230"
+    "bytes": 64459,
+    "sha256": "a9e1369624866190f9f26ab4db22e941e7bc1d64fde0a39bdb0533d816df9668"
   },
   "roly/core.py": {
     "bytes": 67257,
@@ -176,16 +180,16 @@
     "sha256": "30d910160cea63ac3c002d07ccac2130e8854e5924fa86f026f71efccb41932c"
   },
   "roly/member_editor.py": {
-    "bytes": 5417,
-    "sha256": "56dbdd104bcfaffb19f842335654d2350d8bd0f0613132222befa611d07bb926"
+    "bytes": 5452,
+    "sha256": "b6c71155c32c2cc0159db077c8c4a0c09df292703033624e00f79af11b423eac"
   },
   "roly/member_profile.py": {
     "bytes": 2826,
     "sha256": "47d3511f1e660d30e43d4682fb3dce3cf5d8ba6e8b5445c8e3632d5f083644d2"
   },
   "roly/member_profile_page.py": {
-    "bytes": 6053,
-    "sha256": "345f35f6bddb8b2ecd211ab15d909a0a94cb7e619c0b21ec43aa9428a75f02a5"
+    "bytes": 7297,
+    "sha256": "6ed9331958ede8dc5fbd59171bef3600135d325c93107310a8edf42efde71701"
   },
   "roly/member_records.py": {
     "bytes": 5914,
@@ -248,8 +252,8 @@
     "sha256": "0ee2230e11aa7f9ddae14367e25e5584377f5ec23d16473b4999e0a79e884831"
   },
   "roly/ui.py": {
-    "bytes": 20230,
-    "sha256": "5c01ac1f26b9343527c1c736a927498f4f7032f87158e626b5585627a64a2cb8"
+    "bytes": 20327,
+    "sha256": "146407c01a6cd7b26c8a0cb8e3ea0b1b95a0b04195fa6b9919f639e73d9d7ea6"
   },
   "run.bat": {
     "bytes": 147,
@@ -312,8 +316,8 @@
     "sha256": "9599f12fd42fc0bce1cd50b47a0c022e108d7aa64dd0d1bb0ed44f3282d900b4"
   },
   "static/app.css": {
-    "bytes": 10775,
-    "sha256": "7a920b256e3e8d29f1e5b5df6757b977e89fac6ba93b613cd532d34be5f298eb"
+    "bytes": 10920,
+    "sha256": "b3aa6a6e8c5cc5b299cdb1a16c40f534795e65da61f1494b1e7fb8346bd42a7c"
   },
   "static/demo-riot-profiles.json": {
     "bytes": 34177,
@@ -360,8 +364,8 @@
     "sha256": "376312f576d89c7ce2c705ca1b632ca493dd0b4ea8f8f3406e66ad94d3718288"
   },
   "tests/test_auction_reset_ui.py": {
-    "bytes": 7403,
-    "sha256": "7dbc954b785f227020b7ce06a0bc6c2da6f07ded748bb78eb4b9fef2917c7b12"
+    "bytes": 8177,
+    "sha256": "b43af3ffccad1d4b6b56dee10c41c2360b3731bdfb098451920d8a0c9fc53431"
   },
   "tests/test_auction_settings_concurrency.py": {
     "bytes": 2682,
@@ -444,8 +448,8 @@
     "sha256": "cab34b755b53fc1277ecbee366733d8078ff5d15b35442e4ea12d728280bc01b"
   },
   "tests/test_events_ui.py": {
-    "bytes": 27927,
-    "sha256": "58e8241b55c38abc93323002fb01eab82fdd788dd0386ed583ee34929d05a310"
+    "bytes": 31891,
+    "sha256": "eeacc9d24232ac9e29d0108533c972f79623caaa40ccdc314dbf39148e32d6c4"
   },
   "tests/test_home_ui.py": {
     "bytes": 12822,
@@ -488,8 +492,8 @@
     "sha256": "da17382ebcb0a0ffe02ce833166344186c846098caa488f12594f240b85e8557"
   },
   "tests/test_member_profile_ui.py": {
-    "bytes": 15738,
-    "sha256": "5a2eb8c16688fc10bedd75d69590d5ecb7d837a555da33b47d2cbd716463b54f"
+    "bytes": 16972,
+    "sha256": "e17525a505dd54c10894a7eae1f6d45a943b3835dfbabd5c8847f96d433c251b"
   },
   "tests/test_member_records.py": {
     "bytes": 8940,
@@ -498,6 +502,10 @@
   "tests/test_member_snapshots.py": {
     "bytes": 11028,
     "sha256": "4f6e06e5ee28ed637f7232ebab340c216a3f6788f012f7dc6ec8a7bb75a3eab4"
+  },
+  "tests/test_normal_swap_concurrency.py": {
+    "bytes": 8864,
+    "sha256": "f72921f58e170321aa45b3eb54492899be630e09633fad8e6beda3f70ba0ed52"
   },
   "tests/test_operating_login.py": {
     "bytes": 11301,
@@ -520,8 +528,8 @@
     "sha256": "b63ec5b8dcff005e751b827ff524ed156e1851d5e0338807e302e7fb2c6c327f"
   },
   "tests/test_profile_page.py": {
-    "bytes": 12670,
-    "sha256": "f9822b2099e58a01bb2c870cda56e1f52298b5fa3ef269271d7a74a39371e1da"
+    "bytes": 16598,
+    "sha256": "bbd8ce0b54139174d6ffe3926d4ca4453feaac3fa1232fbd8c5f7fdd888bad88"
   },
   "tests/test_recovery_rehearsal.py": {
     "bytes": 2177,

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from roly.core import Core
+from roly.core import Core, ROLES
 from roly.competition import Competition
 from roly.lounge import Lounge
 from roly.member_profile_page import profile_header
@@ -224,3 +224,56 @@ class ProfilePageTests(unittest.TestCase):
         self.assertFalse(self.header(app))
         self.assertFalse(app.dataframe)
         self.assertTrue(any("이용 공간이 변경" in item.value for item in app.info))
+
+    def test_team_history_restores_saved_identity_teams_and_sale_points_without_new_requests(self):
+        comp = Competition(self.core)
+        ids = [self.mid]
+        for index in range(1, 20):
+            member_id = self.core.join_member(f"ProfileHistory{index}#QA", ROLES[index % 5], ROLES[(index + 1) % 5])
+            self.core.approve_member(self.token, member_id, 100)
+            ids.append(member_id)
+        normal_id = comp.create_normal(self.token, [
+            {"member_id": mid, "role": ROLES[index % 5]} for index, mid in enumerate(ids[:10])
+        ], title="Saved normal history")
+        auction_id = comp.create_auction(self.token, ids, [ids[1], ids[5], ids[10], ids[15]],
+                                         title="Saved auction history", format_name="TOURNAMENT")
+        team = comp.get_event(auction_id)["teams"][0]
+        comp.bid(self.token, auction_id, self.mid, team["id"], 42)
+        comp.bid(self.token, auction_id, ids[3], team["id"], 0)
+        self.core.update_member(self.token, self.mid, "CurrentProfileName#QA", "MID", "SUP", 200,
+                                "rename after saved roster", clan_tier="새 클랜 티어",
+                                current_tier="다이아몬드 1", current_tier_lp=88)
+        original = comp.get_event(auction_id)
+        from roly.member_records import member_records
+        with patch("roly.member_profile_page.member_records", wraps=member_records) as loaded:
+            app = self.app(self.mid)
+        loaded.assert_called_once()
+        history = next(frame.value for frame in app.dataframe if "낙찰 포인트" in frame.value.columns)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(set(history["구분"]), {"일반내전", "경매"})
+        self.assertEqual(set(history["당시 Riot ID"]), {"ProfileMember#QA"})
+        self.assertEqual(set(history["당시 클랜 티어"]), {"클랜 다이아"})
+        self.assertEqual(set(history["당시 현재 티어"]), {"실버 4 · 9 LP"})
+        self.assertEqual(set(history["당시 전력"]), {123})
+        sale = history.loc[history["구분"] == "경매"].iloc[0]
+        self.assertEqual((sale["역할"], sale["팀"], sale["포지션"], sale["낙찰 포인트"]),
+                         ("선수", team["name"], "탑", "42 P"))
+        self.assertEqual(history.loc[history["구분"] == "일반내전", "낙찰 포인트"].tolist(), ["—"])
+        self.assertIn("CurrentProfileName", self.header(app))
+        self.assertNotIn("private-", history.to_json())
+        self.assertFalse(any(button.label in ("회원 정보 수정", "닉네임 변경") for button in app.button))
+        captain = self.app(ids[1])
+        captain_history = next(frame.value for frame in captain.dataframe if "낙찰 포인트" in frame.value.columns)
+        captain_sale = captain_history.loc[captain_history["구분"] == "경매"].iloc[0]
+        self.assertEqual((captain_sale["역할"], captain_sale["팀"]), ("팀장", team["name"]))
+        self.assertEqual(set(captain_history["낙찰 포인트"]), {"—"})
+        unassigned = self.app(ids[2])
+        unassigned_history = next(frame.value for frame in unassigned.dataframe if "낙찰 포인트" in frame.value.columns)
+        unassigned_sale = unassigned_history.loc[unassigned_history["구분"] == "경매"].iloc[0]
+        self.assertEqual((unassigned_sale["팀"], unassigned_sale["역할"]), ("미배정", "선수"))
+        self.assertEqual(set(unassigned_history["낙찰 포인트"]), {"—"})
+        free = self.app(ids[3])
+        free_history = next(frame.value for frame in free.dataframe if "낙찰 포인트" in frame.value.columns)
+        self.assertEqual(free_history.loc[free_history["구분"] == "경매", "낙찰 포인트"].tolist(), ["0 P"])
+        self.assertEqual(comp.get_event(auction_id), original)
+        self.assertEqual(comp.get_event(normal_id)["title"], "Saved normal history")

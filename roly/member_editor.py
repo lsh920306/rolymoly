@@ -41,8 +41,9 @@ def member_edit_form(core, token, actor, member_id, *, prefix):
     if stale:
         st.warning("다른 작업에서 회원 정보가 변경되었습니다. 최신 정보를 불러온 뒤 다시 확인해주세요.")
         if st.button("최신 회원 정보 불러오기", key=f"{context_key}_reload"):
-            st.session_state[context_key] = dict(current)
-            st.rerun()
+            reviewed = dict(current)
+            st.session_state[context_key] = reviewed
+            stale = False
     version = sha256(reviewed["updated_at"].encode()).hexdigest()[:16]
     key = f"{context_key}_{version}"
     with st.form(f"{key}_form"):

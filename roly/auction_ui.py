@@ -189,6 +189,7 @@ def auction_reset_dialog(event_id, token):
                        expected_fingerprint=preview["fingerprint"])
             close_auction_reset()
             st.session_state.pop(f"live_pending_{event_id}", None)
+            st.session_state.pop(f"live_notice_{event_id}", None)
         perform(apply_reset, "경매를 초기화했습니다. 설정을 확인하고 경매를 시작해 주세요.")
     if st.button("최신 초기화 내용 확인", key=f"live_reset_reload_{event_id}", type="tertiary"):
         st.session_state.pop("live_reset_review", None)

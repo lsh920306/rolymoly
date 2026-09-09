@@ -6,16 +6,17 @@ from roly.riot_profile import member_profiles
 core, competition, token, actor = context()
 heading("회원", "회원별 클랜·현재 티어, 포지션, 전력점수, 일반내전 전적과 우승 업적을 조회합니다.")
 st.caption("주·부 포지션과 클랜 티어는 관리자가 직접 설정합니다. Riot 갱신은 현재 티어·전적·숙련도만 갱신하며 관리자 설정과 전력점수는 유지됩니다.")
-st.caption("전력점수 = 운영진이 확인한 기본점수 + 일반내전 증감 + 사유가 남는 운영진 보정. 승률과 판수는 확정된 일반내전만 포함합니다.")
-st.caption("경매 우승 업적은 전력점수와 별개입니다. 우승팀 5명에게 4팀 경매는 고양이 1개, 6팀은 별 1개, 8팀은 메달 1개를 각각 지급합니다.")
-st.caption("고양이 5개 = 별 1개 · 별 5개 = 메달 1개 · 메달 5개 = 트로피 1개. 경매 결과는 경기 기록의 경매 탭에서 확인할 수 있습니다.")
+with st.expander("점수·우승 업적 기준"):
+    st.caption("전력점수 = 운영진이 확인한 기본점수 + 일반내전 증감 + 사유가 남는 운영진 보정. 승률과 판수는 확정된 일반내전만 포함합니다.")
+    st.caption("경매 우승 업적은 전력점수와 별개입니다. 우승팀 5명에게 4팀 경매는 고양이 1개, 6팀은 별 1개, 8팀은 메달 1개를 각각 지급합니다.")
+    st.caption("고양이 5개 = 별 1개 · 별 5개 = 메달 1개 · 메달 5개 = 트로피 1개. 경매 결과는 경기 기록의 경매 탭에서 확인할 수 있습니다.")
 members = core.list_members()
 profiles = member_profiles(core, [member["id"] for member in members])
 for member in members:
     member["riot_profile"] = profiles.get(member["id"])
 search = st.text_input("클랜원 검색", placeholder="닉네임 또는 Riot 태그로 검색", icon=":material/search:")
 position = st.pills("주 포지션", ["전체"] + list(ROLE_NAMES), default="전체", format_func=lambda r: ROLE_NAMES.get(r, r))
-filtered = [m for m in members if search.casefold() in m["riot_id"].casefold() and (position in (None, "전체") or m["main_role"] == position)]
+filtered = [m for m in members if search.strip().casefold() in m["riot_id"].casefold() and (position in (None, "전체") or m["main_role"] == position)]
 can_edit = bool(actor and actor["role"] == "admin")
 with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
     st.markdown(f"**회원 {len(filtered)}명**")
