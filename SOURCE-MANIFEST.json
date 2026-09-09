@@ -148,8 +148,8 @@
     "sha256": "0688270b178114b312b48126ae3409433686ccc5e73fdf05b5a4126271819136"
   },
   "roly/auction_http_client.py": {
-    "bytes": 3270,
-    "sha256": "ff0525524aef866771d2664e845cf4bf9ac9f4bf9e805f08e808ae28fca01c06"
+    "bytes": 4531,
+    "sha256": "048696e746e408c2027493b4bcc21cd7e5aa20e7929b79bacaf61db72ec62c7f"
   },
   "roly/auction_live_panel.py": {
     "bytes": 29464,
@@ -412,8 +412,8 @@
     "sha256": "879049422df9cc817116c4a8138de02013b6afdebb71c60fb1a06f564ffa4c98"
   },
   "tests/test_auction_http_client.py": {
-    "bytes": 6026,
-    "sha256": "1c8c9b4f892bf99215c5fa1426787b16f7d76fe29474bb7921347376c25b2b12"
+    "bytes": 9735,
+    "sha256": "ae7dc16ccfb9d76fb95af41a6a1ff1456cddcfbf5fae2239da87f19b7c571066"
   },
   "tests/test_auction_latency.py": {
     "bytes": 8484,

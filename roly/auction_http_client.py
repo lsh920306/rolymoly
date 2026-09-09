@@ -1,6 +1,22 @@
 """Browser delivery for the same-origin auction API (no Streamlit rerun)."""
 
 HTTP_JS = r"""
+export function auctionApiUrl(path,{location=globalThis.location,backendBase=globalThis.__streamlit?.BACKEND_BASE_URL}={}) {
+  if(!/^\/api\/auction\/(live|bid)$/.test(path))throw new Error('Invalid auction endpoint');
+  if(!location)return path;
+  const page=new URL(location.href);
+  const injected=typeof backendBase==='string' && backendBase.length>0;
+  const base=new URL(injected?backendBase:page.origin,page.origin);
+  if(base.origin!==page.origin || base.username || base.password || base.search || base.hash)
+    throw new Error('Auction endpoint must share the page origin');
+  if(base.protocol!=='https:' && !(base.protocol==='http:' && ['localhost','127.0.0.1','[::1]'].includes(base.hostname)))
+    throw new Error('Secure auction endpoint required');
+  // Community Cloud serves the app below /~/+/. Its page gateway redirects
+  // root-relative requests; bid requests must never follow that redirect.
+  const prefix=injected?base.pathname.replace(/\/$/,''):(page.pathname.startsWith('/~/+/')?'/~/+':'');
+  return new URL(prefix+path,page.origin).href;
+}
+
 export function createHttpDelivery({config,fetcher,readToken,onFrame,onAck,onError}) {
   const attempted=new Set();
   let stopped=false,latestRead=0;
@@ -20,8 +36,11 @@ export function createHttpDelivery({config,fetcher,readToken,onFrame,onAck,onErr
       if(typeof token!=='string' || token.length<20 || token.length>256) {
         terminalError('로그인 상태를 확인해 주세요. 화면을 새로고침해 주세요.',true);return;
       }
+      let url;
+      try { url=auctionApiUrl(isBid?config.bid_url:config.live_url); }
+      catch (_) {terminalError('경매 연결 주소를 확인하지 못했습니다. 화면을 새로고침해 주세요.',true);return;}
       try {
-        const response=await fetcher(isBid?config.bid_url:config.live_url,{
+        const response=await fetcher(url,{
           method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',
           ...(typeof globalThis.AbortSignal?.timeout==='function'?{signal:globalThis.AbortSignal.timeout(10000)}:{}),
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,

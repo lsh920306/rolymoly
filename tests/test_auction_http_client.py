@@ -11,7 +11,7 @@ HARNESS = r"""
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const source=JSON.parse(readFileSync(0,'utf8'));
-const {createHttpDelivery}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const {auctionApiUrl,createHttpDelivery}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const calls=[],frames=[],acks=[],errors=[];
 const config={bid_url:'/api/auction/bid',live_url:'/api/auction/live',epoch:'server-one',event_id:3};
 const token='test-token-at-least-twenty-characters';
@@ -36,6 +36,76 @@ class AuctionHTTPClientTests(unittest.TestCase):
                                 input=json.dumps(HTTP_JS), capture_output=True, text=True,
                                 encoding="utf-8", timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_api_url_uses_verified_backend_or_cloud_page_prefix(self):
+        self.run_js(r"""
+const cloud=new URL('https://rolymoly-test.streamlit.app/~/+/auction');
+const ordinary=new URL('https://example.test/lounge/auction');
+const cases=[
+  [{location:cloud,backendBase:undefined},'https://rolymoly-test.streamlit.app/~/+'],
+  [{location:cloud,backendBase:'https://rolymoly-test.streamlit.app/~/+/'},'https://rolymoly-test.streamlit.app/~/+'],
+  [{location:cloud,backendBase:'https://rolymoly-test.streamlit.app/backend/'},'https://rolymoly-test.streamlit.app/backend'],
+  [{location:ordinary,backendBase:'https://example.test/custom/prefix/'},'https://example.test/custom/prefix'],
+  [{location:ordinary,backendBase:'/custom/prefix/'},'https://example.test/custom/prefix'],
+  [{location:ordinary,backendBase:undefined},'https://example.test'],
+  [{location:new URL('http://127.0.0.1:8512/auction'),backendBase:undefined},'http://127.0.0.1:8512'],
+];
+for(const [options,prefix] of cases)for(const action of ['live','bid'])
+  assert.equal(auctionApiUrl('/api/auction/'+action,options),prefix+'/api/auction/'+action);
+assert.equal(auctionApiUrl('/api/auction/live',{location:undefined,backendBase:undefined}),'/api/auction/live');
+assert.equal(calls.length,0);
+""")
+
+    def test_api_url_rejects_foreign_or_ambiguous_addresses(self):
+        self.run_js(r"""
+const location=new URL('https://example.test/auction');
+for(const backendBase of [
+  'https://foreign.test/base/', '//foreign.test/base/',
+  'https://user:password@example.test/base/', 'https://user@example.test/base/',
+  'https://example.test/base/?next=/api/auction/live', 'https://example.test/base/#fragment',
+  'http://example.test/base/', 'javascript:alert(1)',
+])assert.throws(()=>auctionApiUrl('/api/auction/live',{location,backendBase}),backendBase);
+assert.throws(()=>auctionApiUrl('/api/auction/live',{
+  location:new URL('http://example.test/auction'),backendBase:undefined}));
+for(const path of [
+  'https://foreign.test/api/auction/bid','//foreign.test/api/auction/bid',
+  '/api/auction/live?next=other','/api/auction/bid#fragment',
+  '/api/auction/live/','/api/auction/%62id','/~/+/api/auction/live',
+  '/api/auction/../bid','/api/auction/live\n','',null,undefined,
+])assert.throws(()=>auctionApiUrl(path,{location,backendBase:undefined}),String(path));
+assert.equal(calls.length,0);
+""")
+
+    def test_untrusted_api_configuration_stops_before_fetch(self):
+        self.run_js(r"""
+globalThis.location=new URL('https://example.test/auction');
+let fetched=0;
+const invalid=[
+  {base:'https://foreign.test/base/'},
+  {base:'https://user:password@example.test/base/'},
+  {base:'https://example.test/base/?query=1'},
+  {base:'https://example.test/base/#fragment'},
+  {path:'https://foreign.test/api/auction/bid'},
+  {path:'//foreign.test/api/auction/live'},
+  {path:'/api/auction/bid?query=1'},
+];
+for(const item of invalid)for(const cmd of [null,command]) {
+  globalThis.__streamlit={BACKEND_BASE_URL:item.base};
+  const denied=[];
+  const guarded=createHttpDelivery({
+    config:{...config,...(item.path?{live_url:item.path,bid_url:item.path}:{})},
+    fetcher:()=>{fetched++;throw new Error('fetch must not run');},readToken:()=>token,
+    onFrame:()=>assert.fail('invalid URL rendered a frame'),
+    onAck:()=>assert.fail('invalid URL acknowledged a bid'),
+    onError:(message,reload)=>denied.push({message,reload}),
+  });
+  await guarded.send(request(1,cmd));
+  await guarded.send(request(2,cmd));
+  assert.equal(guarded.stopped(),true);assert.equal(denied.length,1);
+  assert.equal(denied[0].reload,true);assert.ok(!denied[0].message.includes(token));
+}
+assert.equal(fetched,0);assert.equal(calls.length,0);
+""")
 
     def test_bid_ack_does_not_wait_for_blocked_view(self):
         self.run_js(r"""
