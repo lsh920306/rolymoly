@@ -6,10 +6,9 @@ import streamlit as st
 
 from roly.browser_session import clear_login
 from roly.ui import context, heading, perform, ROLE_NAMES
-from roly.member_editor import current_tier_inputs
 
 core, competition, token, actor = context()
-heading("내 계정" if actor else "가입 신청", "개인 계정으로 로그인하고 운영진의 가입 승인을 받습니다.")
+heading("내 계정" if actor else "회원가입", "개인 계정으로 로그인하고 운영진의 가입 승인을 받습니다.")
 
 if actor:
     st.write(f"로그인 아이디 · {actor['username']}")
@@ -21,13 +20,13 @@ if actor:
         stale = reviewed["updated_at"] != member["updated_at"]
         form_version = sha256(reviewed["updated_at"].encode()).hexdigest()[:16]
         if stale:
-            st.warning("가입 신청 정보가 변경되었습니다. 최신 정보를 불러온 뒤 다시 수정해주세요.")
+            st.warning("회원가입 정보가 변경되었습니다. 최신 정보를 불러온 뒤 다시 수정해주세요.")
             if st.button("최신 신청 정보 불러오기"):
                 st.session_state[review_key] = dict(member)
                 st.rerun()
         rejected = actor.get("registration_status") == "REJECTED"
         if rejected:
-            st.warning("가입 신청을 보완해 주세요. 같은 계정으로 다시 신청할 수 있습니다.")
+            st.warning("회원가입 정보를 보완해 주세요. 같은 계정으로 다시 신청할 수 있습니다.")
             st.text(actor.get("rejection_reason") or "운영진에게 문의해 주세요.")
         else:
             st.info("가입 승인 대기 중입니다. 운영진이 승인하면 이 계정으로 내전에 참여할 수 있습니다.")
@@ -35,14 +34,12 @@ if actor:
             riot_id = st.text_input("Riot ID", value=reviewed["riot_id"], max_chars=53, disabled=stale, key=f"{review_key}_{form_version}_riot")
             main_role = st.selectbox("주 포지션", list(ROLE_NAMES), index=list(ROLE_NAMES).index(reviewed["main_role"]), format_func=ROLE_NAMES.get, disabled=stale, key=f"{review_key}_{form_version}_main")
             sub_role = st.selectbox("부 포지션", list(ROLE_NAMES), index=list(ROLE_NAMES).index(reviewed["sub_role"]), format_func=ROLE_NAMES.get, disabled=stale, key=f"{review_key}_{form_version}_sub")
-            current_tier, current_lp = current_tier_inputs(reviewed, f"{review_key}_{form_version}", disabled=stale)
-            notes = st.text_area("운영진에게 전할 말 (선택)", value=reviewed["application_notes"], max_chars=2000, disabled=stale, key=f"{review_key}_{form_version}_application_notes")
             resubmit = st.form_submit_button("보완하고 다시 신청" if rejected else "신청 정보 수정", type="primary", disabled=stale)
         if resubmit and not stale:
             def save_application():
-                core.resubmit_registration(token, riot_id, main_role, sub_role, notes, current_tier=current_tier, current_tier_lp=current_lp, expected_updated_at=reviewed["updated_at"])
+                core.resubmit_registration(token, riot_id, main_role, sub_role, reviewed["application_notes"], expected_updated_at=reviewed["updated_at"])
                 st.session_state.pop(review_key, None)
-            perform(save_application, "가입 신청 정보를 저장했습니다.")
+            perform(save_application, "회원가입 정보를 저장했습니다.")
         if st.button("승인 상태 확인"):
             st.rerun()
     elif member:
@@ -70,7 +67,7 @@ if actor:
                 perform(change, "비밀번호를 변경했습니다. 새 비밀번호로 다시 로그인해 주세요.")
 else:
     if not core.has_admin():
-        st.info("운영 준비 중입니다. 최초 관리자 설정 후 가입 신청을 받을 수 있습니다.")
+        st.info("운영 준비 중입니다. 최초 관리자 설정 후 회원가입을 할 수 있습니다.")
     else:
         st.session_state.setdefault("signup_request", uuid4().hex)
         with st.form("join_form"):
@@ -80,20 +77,18 @@ else:
             riot_id = st.text_input("Riot ID", placeholder="닉네임#태그", max_chars=53)
             main_role = st.selectbox("주 포지션", list(ROLE_NAMES), format_func=ROLE_NAMES.get)
             sub_role = st.selectbox("부 포지션", list(ROLE_NAMES), index=1, format_func=ROLE_NAMES.get)
-            current_tier, current_lp = current_tier_inputs({}, "signup")
-            notes = st.text_area("운영진에게 전할 말 (선택)", max_chars=500)
             agreed = st.checkbox("경기 결과에 따른 점수와 우승 업적 기록, 운영진 승인 절차를 확인했습니다.")
-            if st.form_submit_button("가입 신청하기", type="primary", width="stretch"):
+            if st.form_submit_button("회원가입", type="primary", width="stretch"):
                 def submit():
                     if not agreed:
                         raise ValueError("운영 절차 확인을 체크해 주세요.")
                     if password != repeat:
                         raise ValueError("비밀번호 확인이 일치하지 않습니다.")
-                    core.register_member(username, password, riot_id, main_role, sub_role, notes,
-                                         request_key=st.session_state.signup_request, current_tier=current_tier, current_tier_lp=current_lp)
+                    core.register_member(username, password, riot_id, main_role, sub_role,
+                                         request_key=st.session_state.signup_request)
                     st.session_state.token = core.login(username, password)
                     st.session_state.pop("signup_request", None)
-                perform(submit, "계정과 가입 신청을 함께 등록했습니다. 운영진의 승인을 기다려 주세요.")
+                perform(submit, "회원가입을 완료했습니다. 운영진의 승인을 기다려 주세요.")
         st.caption("가입 승인은 클랜 가입 절차입니다. 일반내전·경매 참가 신청은 카카오톡에서 별도로 받습니다.")
     with st.expander("비밀번호를 잊으셨나요?"):
         st.caption("카카오톡으로 운영진에게 본인 확인을 요청하고 일회용 재설정 코드를 받아 주세요.")

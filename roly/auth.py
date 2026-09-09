@@ -11,6 +11,7 @@ import sqlite3
 import uuid
 
 from .member_profile import UNSET, validate_current_tier
+from .member_ranks import save_manual_rank
 
 
 def stamp():
@@ -85,7 +86,8 @@ class PersonalAuth:
                 return {"account_id": existing["account_id"], "member_id": existing["member_id"]}
             try:
                 created_at = stamp()
-                member_id = db.execute("INSERT INTO members(riot_id,canonical_id,main_role,sub_role,status,base_score,application_notes,created_at,updated_at,current_tier,current_tier_lp,current_tier_updated_at) VALUES(?,?,?,?,'PENDING',0,?,?,?,?,?,?)", (display, canonical, main_role, sub_role, notes, created_at, created_at, current_tier, current_tier_lp, created_at if current_tier else None)).lastrowid
+                member_id = db.execute("INSERT INTO members(riot_id,canonical_id,main_role,sub_role,status,base_score,application_notes,created_at,updated_at) VALUES(?,?,?,?,'PENDING',0,?,?,?)", (display, canonical, main_role, sub_role, notes, created_at, created_at)).lastrowid
+                save_manual_rank(db, member_id, canonical, current_tier, current_tier_lp, created_at)
                 account_id = db.execute("INSERT INTO accounts(username,display_name,password_hash,salt,role,created_at,member_id) VALUES(?,?,?,?,'member',?,?)", (username, display, digest, salt, stamp(), member_id)).lastrowid
                 db.execute("INSERT INTO registration_requests(request_key,fingerprint,account_id,member_id,status,created_at,updated_at) VALUES(?,?,?,?,'PENDING',?,?)", (request_key, fingerprint, account_id, member_id, stamp(), stamp()))
             except sqlite3.IntegrityError:
@@ -120,7 +122,7 @@ class PersonalAuth:
             row = db.execute("SELECT * FROM registration_requests WHERE account_id=?", (actor["id"],)).fetchone()
             if actor["member_status"] != "PENDING" or not row or row["status"] not in ("PENDING", "REJECTED"):
                 raise ValueError("승인 전 본인의 가입 신청만 수정하거나 다시 제출할 수 있습니다.")
-            member = db.execute("SELECT * FROM members WHERE id=?", (actor["member_id"],)).fetchone()
+            member = self.get_member(actor["member_id"], db)
             member_version = member["updated_at"]
             if expected_updated_at is not None and expected_updated_at != member_version:
                 raise ValueError("신청 내용이 변경되었습니다. 최신 신청을 불러온 뒤 다시 확인해주세요.")
@@ -131,9 +133,12 @@ class PersonalAuth:
             changed = (current_tier, current_tier_lp) != (member["current_tier"], member["current_tier_lp"])
             tier_updated_at = updated_at if changed else member["current_tier_updated_at"]
             try:
-                db.execute("UPDATE members SET riot_id=?,canonical_id=?,main_role=?,sub_role=?,application_notes=?,current_tier=?,current_tier_lp=?,current_tier_updated_at=?,updated_at=? WHERE id=?", (display, canonical, main_role, sub_role, str(notes)[:2000], current_tier, current_tier_lp, tier_updated_at, updated_at, actor["member_id"]))
+                db.execute("UPDATE members SET riot_id=?,canonical_id=?,main_role=?,sub_role=?,application_notes=?,updated_at=? WHERE id=?", (display, canonical, main_role, sub_role, str(notes)[:2000], updated_at, actor["member_id"]))
             except sqlite3.IntegrityError:
                 raise ValueError("이미 신청했거나 등록된 Riot ID입니다.") from None
+            if canonical != member["canonical_id"]:
+                self._invalidate_riot_identity(db, actor["member_id"])
+            save_manual_rank(db, actor["member_id"], canonical, current_tier, current_tier_lp, tier_updated_at or updated_at)
             db.execute("UPDATE accounts SET display_name=? WHERE id=?", (display, actor["id"]))
             db.execute("UPDATE registration_requests SET status='PENDING',rejection_reason='',updated_at=? WHERE account_id=?", (updated_at, actor["id"]))
             action = "REGISTRATION_RESUBMIT" if row["status"] == "REJECTED" else "REGISTRATION_UPDATE"

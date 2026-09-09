@@ -82,7 +82,7 @@ if st.session_state.get("live_reset_event"):
         self.assertNotIn(notice_key, app.session_state)
         self.assertNotEqual(f.state()["current_lot"]["id"], old_lot["id"])
         self.assertTrue(any(item.label == "초기화·취소 전 입찰 기록" for item in app.expander))
-        self.assertTrue(any(item.value == "접수된 입찰이 없습니다." for item in app.caption))
+        self.assertEqual(f.presentation(app, "history")[0]["bids"], [])
         self.assertEqual(f.presentation(app, "sound")[0]["bid_id"], None)
 
     def test_bid_after_preview_rejects_old_confirmation_then_reload_can_reset(self):
@@ -165,7 +165,8 @@ if st.session_state.get("live_reset_event"):
         f.click(captain, "입찰하기")
         self.assertEqual(f.state()["status"], "READY")
         self.assertFalse(any(bid["lot_id"] == lot["id"] for bid in f.state()["bids"]))
-        self.assertFalse(any((button.key or "").startswith("live_bid_") for button in captain.button))
+        self.assertEqual(f.presentation(captain, "stage"), [])
+        self.assertEqual(len(f.presentation(captain, "auction_sync")), 1)
 
 
 if __name__ == "__main__":

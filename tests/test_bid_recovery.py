@@ -20,8 +20,8 @@ class BidRecoveryTests(unittest.TestCase):
         app = fx.app(fx.tokens[0])
         fx.click(app, "+10")
         lot = fx.state()["current_lot"]
-        request_key = f"live_request_{lot['id']}"
-        request = app.session_state[request_key]
+        client = fx.client(app)
+        request = client.request_id
         submit = fx.live.place_bid
 
         def commit_then_disconnect(*args, **kwargs):
@@ -32,17 +32,19 @@ class BidRecoveryTests(unittest.TestCase):
             fx.live, "resolve_bid", side_effect=sqlite3.OperationalError("still disconnected")
         ):
             fx.click(app, "입찰하기")
-            self.assertIn(f"live_pending_{fx.event_id}", app.session_state)
-            self.assertEqual(app.session_state[request_key], request)
+            self.assertIn(f"live_command_pending_{fx.event_id}", app.session_state)
+            self.assertEqual(client.request_id, request)
+            self.assertEqual(client.pending, {"request_id": request, "lot_id": lot["id"], "amount": 10})
             self.assertTrue(fx.widget(app, "button", "입찰하기").disabled)
             self.assertNotIn("synthetic", " ".join(e.value for e in app.error))
 
         fx.live.place_bid(fx.tokens[1], fx.event_id, lot["id"], 20, str(uuid4()))
         before = deepcopy(fx.state())
-        app.run()
+        client.poll()
         fx.healthy(app)
-        self.assertNotIn(f"live_pending_{fx.event_id}", app.session_state)
-        self.assertNotEqual(app.session_state[request_key], request)
+        self.assertNotIn(f"live_command_pending_{fx.event_id}", app.session_state)
+        self.assertIsNone(client.pending)
+        self.assertNotEqual(client.request_id, request)
         after = fx.state()
         self.assertEqual(before["bids"], after["bids"])
         self.assertEqual(before["current_lot"]["closes_at"], after["current_lot"]["closes_at"])
@@ -61,9 +63,10 @@ class BidRecoveryTests(unittest.TestCase):
             fx.live, "resolve_bid", side_effect=sqlite3.OperationalError("offline")
         ):
             fx.click(app, "입찰하기")
-        app.run()
+        fx.client(app).poll()
         fx.healthy(app)
-        self.assertNotIn(f"live_pending_{fx.event_id}", app.session_state)
+        self.assertNotIn(f"live_command_pending_{fx.event_id}", app.session_state)
+        self.assertIsNone(fx.client(app).pending)
         self.assertTrue(any("접수되지 않았습니다" in e.value for e in app.error))
         self.assertEqual(fx.state()["bids"], [])
         self.assertEqual(fx.state()["current_lot"]["closes_at"], before["current_lot"]["closes_at"])
@@ -94,7 +97,7 @@ class BidRecoveryTests(unittest.TestCase):
 
         def trace(sql):
             reads.append(sql.split(None, 1)[0])
-            if "FROM competition_players WHERE event_id" in sql and "participation_status='SELECTED'" in sql:
+            if "FROM competition_players p JOIN members m" in sql and "riot_profiles" in sql:
                 # A slow final list fetch must reduce the displayed remaining
                 # time instead of becoming extra seconds on every refresh.
                 fx.clock_value += 0.8
@@ -108,7 +111,7 @@ class BidRecoveryTests(unittest.TestCase):
         with patch.object(fx.core, "connect", side_effect=count_connect):
             actor, state = fx.live.get_view(fx.tokens[0], fx.event_id)
         self.assertEqual(len(connections), 1)
-        self.assertEqual(reads.count("SELECT"), 7)
+        self.assertEqual(reads.count("SELECT"), 8)
         self.assertEqual(actor["member_id"], fx.captains[0])
         self.assertEqual(len(state["event"]["players"]), 20)
         self.assertEqual(state["event"]["status"], "AUCTION")

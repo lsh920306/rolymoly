@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from roly.member_ranks import save_riot_profile
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -179,10 +180,7 @@ class MemberProfileUITests(unittest.TestCase):
                    "updated_at": "2026-09-08T02:03:04+00:00", "puuid": "internal-only-fixture"}
         member = self.core.get_member(self.mid)
         with self.core.transaction() as db:
-            db.execute("UPDATE members SET current_tier_source='riot',current_tier_updated_at=? WHERE id=?",
-                       (payload["updated_at"], self.mid))
-            db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?)",
-                       (self.mid, member["canonical_id"], json.dumps(payload), 1788832984.0))
+            save_riot_profile(db, self.mid, member["canonical_id"], payload, 1788832984.0)
         cached_before = member_profiles(self.core, [self.mid])[self.mid]
         ids = [self.mid]
         for index in range(1, 10):
@@ -253,26 +251,29 @@ class MemberProfileUITests(unittest.TestCase):
         self.assertTrue(app.error)
         self.assertEqual(self.core.get_member(self.mid), before)
 
-    def test_signup_current_tier_is_saved_and_approval_retains_the_same_account(self):
+    def test_signup_has_no_manual_riot_rank_or_note_and_approval_retains_same_account(self):
         app = self.page("join", None)
         for label, value in (("사용할 로그인 아이디", "ranked-member"), ("사용할 비밀번호 (10자 이상)", "synthetic-ranked-password"),
                              ("비밀번호 확인", "synthetic-ranked-password"), ("Riot ID", "NewRank#QA")):
             self.widget(app, "text_input", label).set_value(value)
-        self.widget(app, "selectbox", "현재 티어").set_value("마스터")
-        self.widget(app, "number_input", "현재 LP (선택)").set_value(327)
+        self.assertFalse(any(item.label == "현재 티어" for item in app.selectbox))
+        self.assertFalse(any(item.label == "현재 LP (선택)" for item in app.number_input))
+        self.assertFalse(any(item.label == "운영진에게 전할 말 (선택)" for item in app.text_area))
         app.checkbox[0].check()
-        self.widget(app, "button", "가입 신청하기").click().run()
+        self.widget(app, "button", "회원가입").click().run()
         self.healthy(app)
         self.assertFalse(app.error)
         actor = self.core.session(app.session_state.token)
         member = self.core.get_member(actor["member_id"])
-        self.assertEqual((member["current_tier"], member["current_tier_lp"], member["clan_tier"], member["base_score"]), ("마스터", 327, "", 0))
+        self.assertEqual((member["current_tier"], member["current_tier_lp"], member["clan_tier"], member["base_score"], member["application_notes"]), ("", None, "", 0, ""))
+        with self.core.read_snapshot() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM member_ranks WHERE member_id=?", (member["id"],)).fetchone()[0], 0)
         self.core.approve_member(self.token, member["id"], 700)
         app.run()
         self.healthy(app)
         after = self.core.session(app.session_state.token)
         self.assertEqual((after["id"], after["member_id"], after["member_status"]), (actor["id"], member["id"], "APPROVED"))
-        self.assertTrue(any("현재 티어 마스터" in item.value for item in app.markdown))
+        self.assertTrue(any("현재 티어 미입력" in item.value for item in app.markdown))
 
 
 if __name__ == "__main__":

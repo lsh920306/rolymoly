@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from roly.core import Core
 from roly.competition import Competition
+from roly.member_ranks import RANK_FIELDS
 from roly.riot_api import RiotAPIError, RiotConfig
 from roly.riot_sync import DatabaseRateLimiter, FORCE_SECONDS, LEASE_SECONDS, RiotSync, TTL_SECONDS, _lock_key
 from roly.riot_sync import _static_data as static_data_function
@@ -152,8 +153,9 @@ class RiotSyncTests(unittest.TestCase):
                 self.assertEqual([stage for stage, _ in self.sync.client.calls[previous_calls:]],
                                  ["account", "summoner", "rank", "masteries"])
                 stored = json.loads(self.row("riot_profiles", member_id)["payload"])
+                self.assertFalse(RANK_FIELDS.intersection(stored))
                 public = self.sync.get_profiles([member_id])[member_id]
-                for profile in (stored, public):
+                for profile in (public,):
                     self.assertEqual((profile["current_tier"], profile["flex_current_tier"], profile["flex_lp"]),
                                      (solo_tier, flex_tier, flex_lp))
                     self.assertEqual((profile["rank_wins"], profile["rank_losses"]), (solo["wins"], solo["losses"]))
@@ -195,8 +197,10 @@ class RiotSyncTests(unittest.TestCase):
                              side_effect=lambda puuid: self.sync.client.request("masteries", puuid, masteries)):
             self.finish()
         stored = json.loads(self.row("riot_profiles")["payload"])
+        self.assertFalse(RANK_FIELDS.intersection(stored))
+        self.assertEqual([champion["id"] for champion in stored["champions"]], [1, 2, 3, 4, 5])
         public = self.sync.get_profiles([self.mid])[self.mid]
-        for profile in (stored, public):
+        for profile in (public,):
             self.assertEqual([champion["id"] for champion in profile["champions"]], [1, 2, 3, 4, 5])
             self.assertEqual([champion["level"] for champion in profile["champions"]], [1, 2, 3, 4, 5])
             self.assertEqual((profile["rank_wins"], profile["rank_losses"], profile["flex_rank_wins"], profile["flex_rank_losses"]),

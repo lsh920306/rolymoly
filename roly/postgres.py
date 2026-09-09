@@ -18,7 +18,7 @@ import threading
 from time import monotonic
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 POOL_MAX_SIZE = 6
 POOL_TIMEOUT = 5.0
 _pool_lock = threading.Lock()
@@ -214,7 +214,7 @@ def _database_error(error):
 
 
 def _batch_select(query, parameters):
-    """Accept one plain SELECT, never a write, lock or SQL function call.
+    """Accept plain SELECTs plus one exact, schema-qualified DB clock sample.
 
     This internal batch API only needs the auction's independent row queries.
     Values remain bound parameters; it is not a general SQL execution API.
@@ -225,6 +225,10 @@ def _batch_select(query, parameters):
     if len(statements) != 1:
         raise sqlite3.ProgrammingError("조회 묶음에는 한 문장씩 전달해 주세요.")
     statement = statements[0]
+    # clock_timestamp is volatile but read-only; use its exact built-in form so
+    # neither arbitrary functions nor search_path shadowing enter this API.
+    if re.fullmatch(r"SELECT\s+EXTRACT\(EPOCH\s+FROM\s+pg_catalog\.clock_timestamp\(\)\)::double\s+precision", statement, re.IGNORECASE):
+        return _bind_query(statement, parameters is not None), parameters
     # Preserve quoted identifiers as tokens, while ignoring quoted values and
     # comments, so a quoted function name cannot bypass the no-calls rule.
     code = " ".join(text if kind == "code" else "__quoted_identifier__"
@@ -234,7 +238,7 @@ def _batch_select(query, parameters):
             or re.search(r"\b(?:WITH|INSERT|UPDATE|DELETE|MERGE|INTO|FOR|LOCK|CALL|DO|COPY|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|SET|RESET)\b", code, re.IGNORECASE)):
         raise sqlite3.ProgrammingError("조회 묶음에는 읽기 전용 SELECT만 사용할 수 있습니다.")
     for match in re.finditer(r"\b([A-Za-z_][A-Za-z_0-9]*)\s*\(", code):
-        if match.group(1).upper() not in {"SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "EXISTS"}:
+        if match.group(1).upper() not in {"SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "EXISTS", "COALESCE"}:
             raise sqlite3.ProgrammingError("조회 묶음에서는 SQL 함수 호출을 사용할 수 없습니다.")
     return _bind_query(statement, parameters is not None), parameters
 
@@ -624,7 +628,7 @@ def initialize(schema="rolymoly"):
                 raise ValueError("저장소 버전이 앱보다 최신입니다. 앱을 업데이트해 주세요.")
             if version == SCHEMA_VERSION:
                 return
-            if version not in (0, 1, 2, 3, 4, 5):
+            if version not in (0, 1, 2, 3, 4, 5, 6):
                 raise ValueError("지원하지 않는 저장소 마이그레이션 버전입니다.")
             stamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")
             if version == 0:
@@ -654,6 +658,10 @@ def initialize(schema="rolymoly"):
             connection.execute("ALTER TABLE members ADD COLUMN IF NOT EXISTS current_tier_source TEXT NOT NULL DEFAULT 'manual' CHECK(current_tier_source IN ('manual','riot'))")
             from .riot_sync import RIOT_DDL
             connection.executescript(RIOT_DDL.replace(" INTEGER", " BIGINT"))
+            if version < 6:
+                connection.execute("INSERT INTO _schema_migrations(version,applied_at) VALUES(6,?)", (stamp,))
+            from .member_ranks import initialize_ranks
+            initialize_ranks(connection, postgres=True)
             raw.execute(psycopg.sql.SQL("REVOKE ALL ON SCHEMA {} FROM PUBLIC").format(psycopg.sql.Identifier(schema)))
             raw.execute(psycopg.sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA {} FROM PUBLIC").format(psycopg.sql.Identifier(schema)))
             raw.execute(psycopg.sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA {} FROM PUBLIC").format(psycopg.sql.Identifier(schema)))

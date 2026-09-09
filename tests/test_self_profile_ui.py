@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from roly.member_ranks import save_riot_profile
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -96,9 +97,7 @@ class SelfProfileUITests(unittest.TestCase):
         payload = {"current_tier": "골드 2", "lp": 37, "profile_icon_url": "", "champions": [],
                    "updated_at": "2026-09-09T00:00:00+00:00", "puuid": "PRIVATE-PUUID"}
         with self.core.transaction() as db:
-            db.execute("UPDATE members SET current_tier='골드 2',current_tier_lp=37,current_tier_source='riot' WHERE id=?", (self.mid,))
-            db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?)",
-                       (self.mid, before["canonical_id"], json.dumps(payload), 100.0))
+            save_riot_profile(db, self.mid, before["canonical_id"], payload, 100.0)
         app = self.page()
         self.widget(app, "button", "닉네임 변경").click().run()
         self.healthy(app)

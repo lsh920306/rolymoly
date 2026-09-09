@@ -61,7 +61,7 @@ with st.container(horizontal=True, horizontal_alignment="center"):
         with st.container(border=True, gap="small", key="lounge_profile"):
             with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
                 st.subheader(profile["name"], width="content")
-                st.page_link("app_pages/join.py", label="가입 신청", icon=":material/person_add:")
+                st.page_link("app_pages/join.py", label="회원가입", icon=":material/person_add:")
             poster, details = st.columns([1, 2.1], gap="medium")
             with poster:
                 image_path = ROOT / "static" / "rolymoly-poster.png"

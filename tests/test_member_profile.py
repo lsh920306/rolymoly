@@ -170,6 +170,7 @@ class MemberProfileTests(unittest.TestCase):
     def test_legacy_sqlite_additive_columns_preserve_identity_and_session(self):
         # Simulate a v2 database shape using only this isolated fixture.
         with self.core.transaction() as db:
+            db.execute("DROP TABLE member_ranks")
             db.execute("UPDATE members SET notes='original note' WHERE id=?", (self.mid,))
             db.execute("ALTER TABLE members DROP COLUMN application_notes")
             for column in ("current_tier_updated_at", "current_tier_lp", "current_tier", "clan_tier"):

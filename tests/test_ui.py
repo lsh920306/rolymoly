@@ -44,6 +44,9 @@ class AppUITests(unittest.TestCase):
         self.assertHealthy()
 
     def widget(self, kind, label):
+        if label in ("입찰하기", "입찰할 포인트"):
+            from tests.live_panel_client import panel_client
+            return panel_client(self.app).widget(kind, label)
         matches = [widget for widget in getattr(self.app, kind)
                    if (kind == "button" and label == "입찰하기" and (widget.key or "").startswith("live_bid_"))
                    or (label != "입찰하기" and widget.label == label)]
@@ -71,7 +74,7 @@ class AppUITests(unittest.TestCase):
         self.widget("selectbox", "주 포지션").set_value("MID")
         self.widget("selectbox", "부 포지션").set_value("SUP")
         self.app.checkbox[0].check()
-        self.click("가입 신청하기")
+        self.click("회원가입")
         member = next(member for member in self.core.list_members(True) if member["riot_id"] == "UI신청회원#KR1")
         self.assertEqual(member["status"], "PENDING")
         self.assertNotIn(member["id"], [row["id"] for row in self.core.list_members()])

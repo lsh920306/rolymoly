@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -17,7 +18,7 @@ import threading
 import time
 import uuid
 
-from .core import integer
+from .core import identity, integer, session_query
 
 BID_INCREMENTS = (5, 10, 20, 30, 50, 70, 100)
 BID_EXTENSION_SECONDS = 5
@@ -726,71 +727,102 @@ class LiveAuction:
     def get_view(self, token, event_id):
         """Read identity and auction display from one consistent DB snapshot."""
         with self.core.read_snapshot() as db:
+            if self.core.is_postgres:
+                return self._fetch_view(event_id, db, actor_query=session_query(token) if token else None)
             actor = self.core.session(token, db)
             state = self.get_state(event_id, conn=db)
             return actor, state
 
-    def get_state(self, event_id, *, conn=None):
-        with self.core.read_snapshot(conn) as db:
-            row = db.execute("""SELECT s.*,e.status AS workflow_status,
+    @staticmethod
+    def _view_statements(event_id):
+        # Historical lots remain available, but their repeated member IDs must
+        # not multiply Riot payload transfer or public-profile validation work.
+        from .member_ranks import RANK_JOINS, RANK_SELECT
+        return [
+            ("""SELECT s.*,e.status AS workflow_status,
                 e.created_by AS host_id,e.kind AS event_kind,e.title AS event_title,
                 COALESCE(a.display_name,a.username,'') AS host_name,
                 EXISTS(SELECT 1 FROM competition_games g WHERE g.event_id=e.id) AS has_games
                 FROM live_sessions s JOIN competition_events e ON e.id=s.event_id
-                LEFT JOIN accounts a ON a.id=e.created_by
-                WHERE s.event_id=?""", (event_id,)).fetchone()
-            if not row:
-                return None
-            result = dict(row)
-            event = {"id": event_id, "status": result.pop("workflow_status"),
-                     "created_by": result.pop("host_id"), "kind": result.pop("event_kind"),
-                     "title": result.pop("event_title"), "host_name": result.pop("host_name"),
-                     "has_games": bool(result.pop("has_games"))}
-            result["event"] = event
-            # Compatibility field now reports the mandatory effective rule.
-            result["reset_on_bid"] = True
-            result["extension_seconds"] = BID_EXTENSION_SECONDS
-            result["bid_seconds"] = _effective_bid_seconds(result["bid_seconds"])
-            result["max_remaining_seconds"] = result["bid_seconds"]
-            result["transition_seconds"] = TRANSITION_SECONDS
-            # These lists share one snapshot and have no dependencies on one
-            # another. Queue them together on PostgreSQL to avoid five remote
-            # round trips; authorization and all writes remain uncached.
-            statements = [
-                ("SELECT l.*,p.riot_id,p.role,p.score,p.clan_tier_snapshot,p.current_tier_snapshot,p.current_tier_lp_snapshot,t.name AS highest_team_name,rp.payload AS riot_cache_payload,rp.canonical_id AS riot_cache_canonical FROM live_lots l JOIN competition_players p ON p.event_id=l.event_id AND p.member_id=l.member_id LEFT JOIN competition_teams t ON t.id=l.highest_team_id JOIN members m ON m.id=p.member_id LEFT JOIN riot_profiles rp ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id WHERE l.event_id=? ORDER BY l.sequence", (event_id,)),
-                ("SELECT b.id,b.request_id,b.event_id,b.lot_id,b.team_id,b.member_id,b.amount,b.closes_at,b.created_at,t.name AS team_name,p.riot_id FROM live_bids b JOIN competition_teams t ON t.id=b.team_id JOIN competition_players p ON p.event_id=b.event_id AND p.member_id=b.member_id WHERE b.event_id=? ORDER BY b.id DESC LIMIT 300", (event_id,)),
-                ("SELECT id,lot_id,type,detail,created_at FROM live_events WHERE event_id=? ORDER BY id DESC LIMIT 300", (event_id,)),
-                ("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event_id,)),
-                ("SELECT p.member_id,p.riot_id,p.role,p.score,p.price,p.team_id,p.state,p.clan_tier_snapshot,p.current_tier_snapshot,p.current_tier_lp_snapshot,rp.payload AS riot_cache_payload,rp.canonical_id AS riot_cache_canonical FROM competition_players p JOIN members m ON m.id=p.member_id LEFT JOIN riot_profiles rp ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id WHERE p.event_id=? AND p.participation_status='SELECTED' ORDER BY p.id", (event_id,)),
-            ]
-            batches = db.fetch_batches(statements) if self.core.is_postgres else [
-                db.execute(query, parameters).fetchall() for query, parameters in statements]
-            result["lots"], result["bids"], result["events"], result["teams"], players = [
-                [dict(row) for row in rows] for rows in batches]
-            from .riot_profile import attach_profile
-            for player in [*result["lots"], *players]:
-                attach_profile(player)
-            # Sample the clock after fetching the display data: query latency
-            # must not become extra visible bidding time on every refresh.
-            stamp = self._now(db)
-            result["server_now"] = stamp
-            result["current_lot"] = next((lot for lot in result["lots"] if lot["id"] == result["current_lot_id"]), None)
-            for lot in result["lots"]:
-                if lot["status"] == "OPEN":
-                    lot["remaining_seconds"] = result["pause_remaining"] if result["status"] == "PAUSED" else max(0.0, lot["closes_at"] - stamp)
-                else:
-                    lot["remaining_seconds"] = 0.0
-            result["next_in_seconds"] = max(0.0, result["next_at"] - stamp) if result["next_at"] is not None else None
-            if result["status"] == "PAUSED" and result["paused_phase"] == "WAITING":
-                result["next_in_seconds"] = result["pause_remaining"]
-            event["players"] = players
-            for team in result["teams"]:
-                team["players"] = [p for p in players if p["team_id"] == team["id"]]
-                team["remaining"] = team["budget"] - sum(p["price"] for p in team["players"])
-            result["unsold_count"] = sum(p["team_id"] is None and p["state"] == "UNSOLD" for p in players)
-            result["queued_count"] = sum(lot["status"] == "QUEUED" for lot in result["lots"])
-            result["worker_error"] = self._worker_error()
-            return result
+                LEFT JOIN accounts a ON a.id=e.created_by WHERE s.event_id=?""", (event_id,)),
+            ("SELECT l.*,p.riot_id,p.role,p.score,p.clan_tier_snapshot,p.current_tier_snapshot,p.current_tier_lp_snapshot,t.name AS highest_team_name FROM live_lots l JOIN competition_players p ON p.event_id=l.event_id AND p.member_id=l.member_id LEFT JOIN competition_teams t ON t.id=l.highest_team_id WHERE l.event_id=? ORDER BY l.sequence", (event_id,)),
+            ("SELECT b.id,b.request_id,b.event_id,b.lot_id,b.team_id,b.member_id,b.amount,b.closes_at,b.created_at,t.name AS team_name,p.riot_id FROM live_bids b JOIN competition_teams t ON t.id=b.team_id JOIN competition_players p ON p.event_id=b.event_id AND p.member_id=b.member_id WHERE b.event_id=? ORDER BY b.id DESC LIMIT 300", (event_id,)),
+            ("SELECT id,lot_id,type,detail,created_at FROM live_events WHERE event_id=? ORDER BY id DESC LIMIT 300", (event_id,)),
+            ("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event_id,)),
+            ("SELECT p.member_id,p.riot_id,p.role,p.score,p.price,p.team_id,p.state,p.clan_tier_snapshot,p.current_tier_snapshot,p.current_tier_lp_snapshot FROM competition_players p WHERE p.event_id=? AND p.participation_status='SELECTED' ORDER BY p.id", (event_id,)),
+            (f"SELECT m.id AS member_id,m.riot_id,m.canonical_id AS profile_canonical_id,rp.payload AS riot_cache_payload,rp.canonical_id AS riot_cache_canonical,{RANK_SELECT} FROM competition_players p JOIN members m ON m.id=p.member_id LEFT JOIN riot_profiles rp ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id {RANK_JOINS} WHERE p.event_id=? ORDER BY p.id", (event_id,)),
+        ]
+
+    def get_state(self, event_id, *, conn=None):
+        with self.core.read_snapshot(conn) as db:
+            return self._fetch_view(event_id, db)[1]
+
+    def _fetch_view(self, event_id, db, *, actor_query=None):
+        statements = self._view_statements(event_id)
+        if actor_query is not None:
+            statements.insert(0, actor_query)
+        clock_in_batch = self.core.is_postgres and not self._injected_clock
+        if clock_in_batch:
+            # This is last so all display SELECTs precede its DB-clock
+            # sample. No host wall clock participates in PG deadlines.
+            statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", None))
+        batches = db.fetch_batches(statements) if self.core.is_postgres else [
+            db.execute(query, parameters).fetchall() for query, parameters in statements]
+        received = time.monotonic()
+        sampled_clock = float(batches.pop()[0][0]) if clock_in_batch else None
+        actor_rows = batches.pop(0) if actor_query is not None else []
+        actor = dict(actor_rows[0]) if actor_rows else None
+        header, lots, bids, events, teams, players, profiles = batches
+        if not header:
+            return actor, None
+        result = dict(header[0])
+        event = {"id": event_id, "status": result.pop("workflow_status"),
+                 "created_by": result.pop("host_id"), "kind": result.pop("event_kind"),
+                 "title": result.pop("event_title"), "host_name": result.pop("host_name"),
+                 "has_games": bool(result.pop("has_games"))}
+        result["event"] = event
+        # Compatibility field now reports the mandatory effective rule.
+        result["reset_on_bid"] = True
+        result["extension_seconds"] = BID_EXTENSION_SECONDS
+        result["bid_seconds"] = _effective_bid_seconds(result["bid_seconds"])
+        result["max_remaining_seconds"] = result["bid_seconds"]
+        result["transition_seconds"] = TRANSITION_SECONDS
+        result["lots"], result["bids"], result["events"], result["teams"], players = [
+            [dict(row) for row in rows] for rows in (lots, bids, events, teams, players)]
+        from .riot_profile import attach_profile
+        public_profiles = {}
+        for row in profiles:
+            profile = dict(row)
+            attach_profile(profile)
+            public_profiles[profile["member_id"]] = (profile["profile_canonical_id"], profile["riot_profile"])
+        for player in [*result["lots"], *players]:
+            canonical, profile = public_profiles.get(player["member_id"], (None, None))
+            try:
+                matches = canonical is not None and identity(player["riot_id"])[1] == canonical
+            except ValueError:
+                matches = False
+            player["riot_profile"] = deepcopy(profile) if matches else None
+        # Account for local conversion time after the final database clock
+        # sample. This duration uses a monotonic clock, never wall time.
+        stamp = sampled_clock + max(0, time.monotonic()-received) if clock_in_batch else self._now(db)
+        result["server_now"] = stamp
+        result["current_lot"] = next((lot for lot in result["lots"] if lot["id"] == result["current_lot_id"]), None)
+        for lot in result["lots"]:
+            if lot["status"] == "OPEN":
+                lot["remaining_seconds"] = result["pause_remaining"] if result["status"] == "PAUSED" else max(0.0, lot["closes_at"] - stamp)
+            else:
+                lot["remaining_seconds"] = 0.0
+        result["next_in_seconds"] = max(0.0, result["next_at"] - stamp) if result["next_at"] is not None else None
+        if result["status"] == "PAUSED" and result["paused_phase"] == "WAITING":
+            result["next_in_seconds"] = result["pause_remaining"]
+        event["players"] = players
+        for team in result["teams"]:
+            team["players"] = [p for p in players if p["team_id"] == team["id"]]
+            team["remaining"] = team["budget"] - sum(p["price"] for p in team["players"])
+        result["unsold_count"] = sum(p["team_id"] is None and p["state"] == "UNSOLD" for p in players)
+        result["queued_count"] = sum(lot["status"] == "QUEUED" for lot in result["lots"])
+        result["worker_error"] = self._worker_error()
+        return actor, result
 
     def has_active_sessions(self):
         with closing(self.core.connect()) as db:

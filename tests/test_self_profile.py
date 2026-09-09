@@ -8,6 +8,7 @@ import sqlite3
 import tempfile
 from threading import Barrier
 import unittest
+from roly.member_ranks import save_riot_profile
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -62,10 +63,8 @@ class SelfProfileTests(unittest.TestCase):
     def cached(self):
         member = self.core.get_member(self.mid)
         with self.core.transaction() as db:
-            db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?)",
-                (self.mid, member["canonical_id"], json.dumps({"current_tier": "다이아몬드 1", "lp": 70,
-                 "flex_current_tier": "플래티넘 2", "champions": []}), 2_000_000_000.0))
-            db.execute("UPDATE members SET current_tier='다이아몬드 1',current_tier_lp=70,current_tier_source='riot',current_tier_updated_at=updated_at WHERE id=?", (self.mid,))
+            save_riot_profile(db, self.mid, member["canonical_id"], {"current_tier": "다이아몬드 1", "lp": 70,
+                 "flex_current_tier": "플래티넘 2", "champions": []}, 2_000_000_000.0)
         sync = RiotSync(self.core, RiotConfig("synthetic-key"), client_factory=FakeClient, clock=Clock())
         self.assertEqual(sync.enqueue(self.token, [self.mid], force=True), 1)
         return sync

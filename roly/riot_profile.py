@@ -7,6 +7,7 @@ import re
 from .core import identity
 from .member_profile import validate_current_tier
 from .riot_api import MASTERY_LIMIT
+from .member_ranks import RANK_SELECT, RANK_JOINS, profile_projection, strip_rank_columns
 
 
 def image_url(value):
@@ -69,9 +70,10 @@ def attach_profile(row):
     row["riot_profile"] = None
     try:
         if canonical and identity(row["riot_id"])[1] == canonical:
-            row["riot_profile"] = public_profile(payload)
+            row["riot_profile"] = public_profile(profile_projection(payload, row))
     except (ValueError, KeyError):
         pass
+    strip_rank_columns(row)
     return row
 
 
@@ -84,9 +86,9 @@ def member_profiles(core, member_ids):
         for offset in range(0, len(ids), 100):
             batch = ids[offset:offset + 100]
             marks = ",".join("?" for _ in batch)
-            rows = db.execute(f"SELECT m.id,rp.payload FROM members m JOIN riot_profiles rp ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id WHERE m.id IN ({marks}) AND m.status='APPROVED'", batch)
+            rows = db.execute(f"SELECT m.id,rp.payload,{RANK_SELECT} FROM members m JOIN riot_profiles rp ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id {RANK_JOINS} WHERE m.id IN ({marks}) AND m.status='APPROVED'", batch)
             for row in rows:
-                profile = public_profile(row["payload"])
+                profile = public_profile(profile_projection(row["payload"], row))
                 if profile:
                     results[row["id"]] = profile
     return results

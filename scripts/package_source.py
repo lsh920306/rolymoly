@@ -12,6 +12,7 @@ def build():
     root_files = ["app.py", "streamlit_app.py", "requirements.txt", "run.bat", ".gitignore", "README.md", "DESIGN.md", "REVIEW.md", "CODE_REVIEW.md", "REHEARSAL.md", "DEPLOYMENT.md"]
     sources = [ROOT / name for name in root_files]
     sources.extend(path for path in sorted(ROOT.glob("*.md")) if path not in sources)
+    sources.extend(sorted((ROOT / "docs").glob("*.md")))
     sources.append(ROOT / ".streamlit" / "secrets.toml.example")
     for folder in ("roly", "app_pages", "tests", "scripts"):
         sources.extend(sorted((ROOT / folder).glob("*.py")))

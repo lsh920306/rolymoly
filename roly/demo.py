@@ -61,6 +61,7 @@ def _demo_clan_tier(current_tier):
 
 
 def _seed_riot_profiles(core, member_ids):
+    from .member_ranks import save_riot_profile
     document = _load_riot_snapshot()
     with core.transaction() as db:
         for member_id in member_ids:
@@ -82,11 +83,9 @@ def _seed_riot_profiles(core, member_ids):
                            (clan_tier, now(), member_id, canonical))
                 continue
             profile["updated_at"] = captured.isoformat(timespec="microseconds")
-            db.execute("UPDATE members SET clan_tier=?,current_tier=?,current_tier_lp=?,current_tier_source='riot',current_tier_updated_at=?,updated_at=? WHERE id=? AND canonical_id=?",
-                       (clan_tier, profile["current_tier"], profile["lp"],
-                        profile["updated_at"], now(), member_id, canonical))
-            db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?)",
-                       (member_id, canonical, json.dumps(profile, ensure_ascii=False, separators=(",", ":")), fetched_at))
+            db.execute("UPDATE members SET clan_tier=?,updated_at=? WHERE id=? AND canonical_id=?",
+                       (clan_tier, now(), member_id, canonical))
+            save_riot_profile(db, member_id, canonical, profile, fetched_at)
 
 
 def seed(core, *, credentials=None):

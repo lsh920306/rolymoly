@@ -54,7 +54,7 @@ class BackupStorageTests(unittest.TestCase):
             self.addCleanup(change.stop)
         self.config = ConnectionConfig("example.pooler.supabase.com", "postgres.synthetic", "private-test-password")
         self.native = {"pg_dump": "pg_dump", "pg_restore": "pg_restore", "pg_dump_major": 17, "pg_restore_major": 17}
-        self.fingerprint = {"schema_version": 6, "tables": {"members": {"rows": 2, "sha256": "synthetic"}}}
+        self.fingerprint = {"schema_version": backup.SCHEMA_VERSION, "tables": {"members": {"rows": 2, "sha256": "synthetic"}}}
 
     def archive(self):
         directory = backup.BACKUP_ROOT / "synthetic-backup"

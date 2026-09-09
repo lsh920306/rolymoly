@@ -7,9 +7,11 @@ from uuid import uuid4
 
 import streamlit as st
 
-from roly.live_auction import BID_EXTENSION_SECONDS, BID_INCREMENTS, BID_SECONDS_OPTIONS, LiveAuction
-from roly.auction_components import render_stage, render_team, render_overview, render_queue, render_remaining, render_sound
+from roly.live_auction import BID_EXTENSION_SECONDS, BID_SECONDS_OPTIONS, LiveAuction
+from roly.auction_components import render_team, render_overview, render_queue, render_remaining, render_sound, render_history
 from roly.auction_sync import render_auction_sync
+from roly.auction_commands import clean_envelope, context_id, execute_command
+from roly.auction_live_panel import render_live_panel
 from roly.ui import ROLE_NAMES, can_edit, perform, services
 
 
@@ -36,34 +38,62 @@ def stamp(value):
     return parsed.astimezone(KST).strftime("%H:%M:%S")
 
 
-def _store_amount(key, revision_key, amount):
-    # The draft is not a widget value: an already queued automatic rerun must
-    # never replace it with a number_input value from the previous screen.
-    st.session_state[key] = int(amount)
-    # A new draft after logout must not reuse a prior screen's widget identity.
-    st.session_state[revision_key] = uuid4().hex
-
-
-def _increment(key, amount, highest_bid, revision_key):
-    _store_amount(key, revision_key, max(int(st.session_state.get(key, 0)), int(highest_bid or 0)) + amount)
-
-
-def _reset_amount(key, highest_bid, revision_key):
-    _store_amount(key, revision_key, int(highest_bid or 0))
-
-
-def _accept_typed_amount(key, revision_key, widget_key, displayed_revision):
-    if st.session_state.get(revision_key) != displayed_revision:
-        return
-    amount = int(st.session_state[widget_key])
-    if amount >= 0 and amount != st.session_state[key]:
-        _store_amount(key, revision_key, amount)
-
-
 def _view_adjacent_team(key, team_ids, direction):
     current = st.session_state.get(key)
     index = team_ids.index(current) if current in team_ids else 0
     st.session_state[key] = team_ids[(index + direction) % len(team_ids)]
+
+
+def _on_live_event(live, token, event_id, component_key, context):
+    """Handle an immutable command before expensive snapshot rendering."""
+    started = monotonic()
+    if token != st.session_state.get("token") or live.core.db_path != st.session_state.get("db_path"):
+        return
+    component = st.session_state.get(component_key, {})
+    value = component.get("event") if isinstance(component, dict) else getattr(component, "event", None)
+    try:
+        request = clean_envelope(value, context)
+    except ValueError as error:
+        st.session_state[f"live_notice_{event_id}"] = {
+            "success": False, "message": str(error), "lot_id": None, "token": token}
+        return
+    st.session_state[f"live_transport_request_{event_id}"] = request
+    st.session_state[f"live_transport_started_{event_id}"] = started
+    command = request.get("command")
+    pending_key = f"live_command_pending_{event_id}"
+    pending = st.session_state.get(pending_key)
+    if pending and pending["context"] != context:
+        st.session_state.pop(pending_key, None)
+        pending = None
+    # A client dropping its pending intent must not start another write while
+    # the first outcome is unknown. Replay the original immutable UUID first.
+    if pending and command != pending["command"]:
+        command = pending["command"]
+    if command:
+        ack = execute_command(live, token, event_id, command, confirm_only=bool(pending))
+        st.session_state[f"live_command_ack_{event_id}"] = {"context": context, **ack}
+        if ack["status"] == "pending":
+            st.session_state[pending_key] = {"context": context, "command": command}
+        else:
+            st.session_state.pop(pending_key, None)
+        st.session_state[f"live_notice_{event_id}"] = {
+            "success": ack["status"] == "accepted", "message": ack["message"],
+            "lot_id": command["lot_id"], "token": token}
+
+
+def _transport_frame(event_id, context, received_at):
+    request = st.session_state.get(f"live_transport_request_{event_id}")
+    if not request or request.get("context") != context:
+        request = None
+    started = st.session_state.get(f"live_transport_started_{event_id}", received_at)
+    ack = st.session_state.get(f"live_command_ack_{event_id}")
+    if not ack or ack.get("context") != context:
+        ack = None
+    key = f"live_frame_{event_id}"
+    st.session_state[key] = st.session_state.get(key, 0) + 1
+    return {"context": context, "frame_id": st.session_state[key], "request": request,
+            "server_elapsed_ms": max(0, (received_at - started) * 1000) if request else 0,
+            "snapshot_elapsed_ms": max(0, (monotonic() - received_at) * 1000), "ack": ack}
 
 
 def _live_action(event_id, action, message, *, lot_id=None):
@@ -78,67 +108,6 @@ def _live_action(event_id, action, message, *, lot_id=None):
         st.session_state[f"live_notice_{event_id}"] = {"success": False, "message": "입찰 처리 결과를 확인하지 못했습니다. 저장소 상태를 확인하고 있습니다.", "lot_id": lot_id, "token": st.session_state.get("token")}
     else:
         st.session_state[f"live_notice_{event_id}"] = {"success": True, "message": message, "lot_id": lot_id, "token": st.session_state.get("token")}
-
-
-def _submit_bid(live, token, event_id, lot_id, amount_key, request_key, displayed_amount,
-                *, revision_key=None, displayed_revision=None):
-    def submit():
-        if st.session_state.get(f"live_pending_{event_id}"):
-            if not _resolve_pending_bid(live, token, event_id):
-                raise sqlite3.OperationalError("Unresolved bid")
-        submitted_amount = int(st.session_state[amount_key])
-        if submitted_amount != displayed_amount or (revision_key is not None
-                and st.session_state.get(revision_key) != displayed_revision):
-            raise ValueError("입찰 금액이 화면의 금액과 달라 접수하지 않았습니다. 현재 금액을 확인한 뒤 다시 입찰해 주세요.")
-        pending_key = f"live_pending_{event_id}"
-        st.session_state[pending_key] = {"token": token, "db_path": live.core.db_path,
-            "event_id": event_id, "lot_id": lot_id, "amount": submitted_amount,
-            "request_id": st.session_state[request_key], "request_key": request_key}
-        try:
-            live.place_bid(token, event_id, lot_id, submitted_amount, st.session_state[request_key])
-        except (ValueError, PermissionError, sqlite3.IntegrityError):
-            st.session_state.pop(pending_key, None)
-            raise
-        st.session_state.pop(pending_key, None)
-        st.session_state[request_key] = uuid4().hex
-    with st.spinner("입찰 접수를 확인하고 있습니다.", show_time=True):
-        _live_action(event_id, submit, "입찰을 접수했습니다.", lot_id=lot_id)
-
-
-def _resolve_pending_bid(live, token, event_id):
-    """Confirm the old immutable request before accepting another bid intent."""
-    key = f"live_pending_{event_id}"
-    pending = st.session_state.get(key)
-    if not pending:
-        return True
-    if pending["token"] != token or pending["db_path"] != live.core.db_path:
-        st.session_state.pop(key, None)
-        return True
-    try:
-        receipt = live.resolve_bid(token, event_id, pending["lot_id"], pending["amount"], pending["request_id"])
-    except sqlite3.OperationalError:
-        st.session_state[f"live_notice_{event_id}"] = {"success": False,
-            "message": "이전 입찰의 접수 여부를 확인하고 있습니다. 연결이 회복되면 자동으로 확인합니다.",
-            "lot_id": None, "token": token}
-        return False
-    except (ValueError, PermissionError, sqlite3.IntegrityError) as error:
-        st.session_state.pop(key, None)
-        st.session_state[f"live_notice_{event_id}"] = {"success": False,
-            "message": str(error), "lot_id": None, "token": token}
-        return False
-    except sqlite3.Error:
-        st.session_state[f"live_notice_{event_id}"] = {"success": False,
-            "message": "이전 입찰의 접수 여부를 확인하지 못했습니다. 저장소가 정상화되면 자동으로 다시 확인합니다.",
-            "lot_id": None, "token": token}
-        return False
-    st.session_state.pop(key, None)
-    if st.session_state.get(pending["request_key"]) == pending["request_id"]:
-        st.session_state[pending["request_key"]] = uuid4().hex
-    st.session_state[f"live_notice_{event_id}"] = {"success": bool(receipt),
-        "message": f"이전 {pending['amount']:,} P 입찰의 접수를 확인했습니다." if receipt else
-            "이전 입찰은 접수되지 않았습니다. 현재 금액과 남은 시간을 확인한 뒤 다시 입찰해 주세요.",
-        "lot_id": None, "token": token}
-    return True
 
 
 def close_team_overview():
@@ -435,18 +404,26 @@ def render_live_auction(event_id, *, page_route=False):
     return rendered
 
 
-@st.fragment(run_every=0.5)
+@st.fragment
 def _render_live_auction(event_id, *, page_route=False):
     """Read one fresh view; a missing legacy session can use the parent page."""
-    render_auction_sync(key=f"auction_live_sync_{event_id}")
     token = st.session_state.get("token")
     live = live_service(st.session_state.db_path)
-    _resolve_pending_bid(live, token, event_id)
+    context = context_id(live.core.db_path, token, event_id)
+    for suffix in ("command_pending", "command_ack", "transport_request"):
+        saved_key = f"live_{suffix}_{event_id}"
+        saved = st.session_state.get(saved_key)
+        if saved and saved.get("context") != context:
+            st.session_state.pop(saved_key, None)
+    component_key = f"live_stage_{event_id}"
+    on_event = lambda: _on_live_event(live, token, event_id, component_key, context)
     try:
         actor, state = live.get_view(token, event_id)
         view_received_at = monotonic()
     except sqlite3.Error:
         st.error("경매 상태를 불러오지 못했습니다. 연결이 회복되면 다시 확인합니다.")
+        render_live_panel(None, key=component_key, control=None,
+                          transport=_transport_frame(event_id, context, monotonic()), on_event_change=on_event)
         return True  # Keep polling; a failed read is not an absent live session.
     if not state:
         if page_route:
@@ -567,7 +544,6 @@ def _render_live_auction(event_id, *, page_route=False):
         if status == "COMPLETED":
             st.success("경매가 완료되었습니다. 명단과 포지션을 확인하고 대진표를 만드세요.")
         elif lot:
-            render_stage(display_state, key=f"live_stage_{event_id}", elapsed_seconds=monotonic() - view_received_at)
             remaining = max(0, float(lot.get("remaining_seconds") or 0))
             if lot["status"] == "UNSOLD":
                 closed_event = next((item for item in state.get("events", [])
@@ -579,42 +555,17 @@ def _render_live_auction(event_id, *, page_route=False):
                     st.caption("참가 상태를 확인한 뒤 재경매를 진행해 주세요.")
                 else:
                     st.info("입찰이 없어 유찰되었습니다. 마지막 선수까지 진행한 뒤 재경매할 수 있습니다.")
+            control = None
             if own_team:
-                amount_key = f"live_amount_draft_{lot['id']}"
-                revision_key = f"live_amount_revision_{lot['id']}"
-                request_key = f"live_request_{lot['id']}"
-                st.session_state.setdefault(amount_key, int(lot.get("highest_bid") or 0))
-                st.session_state.setdefault(revision_key, uuid4().hex)
-                st.session_state.setdefault(request_key, uuid4().hex)
-                amount = int(st.session_state[amount_key])
-                revision = st.session_state[revision_key]
-                input_key = f"live_amount_input_{lot['id']}_{revision}"
                 can_bid = (event["status"] == "AUCTION" and status == "RUNNING" and lot["status"] == "OPEN"
-                    and remaining > 0 and len(own_team["players"]) < 5 and not st.session_state.get(f"live_pending_{event_id}"))
-                balance_column, amount_column = st.columns(2, gap="xsmall")
-                with balance_column, st.container(border=True, key=f"live_balance_panel_{event_id}", gap="xxsmall"):
-                    st.caption(f"내 포인트 · {own_team['name']}")
-                    st.markdown(f"**{own_team['remaining']:,} P**")
-                with amount_column, st.container(border=True, key=f"live_amount_panel_{event_id}", gap="xxsmall"):
-                    st.number_input("입찰할 포인트", min_value=0, step=5, value=amount,
-                                    key=input_key, disabled=not can_bid, on_change=_accept_typed_amount,
-                                    args=(amount_key, revision_key, input_key, revision))
-                with st.container(horizontal=True, gap="xxsmall", key=f"live_increments_{event_id}"):
-                    for increment in BID_INCREMENTS:
-                        st.button(f"+{increment}", key=f"live_add_{lot['id']}_{increment}", on_click=_increment,
-                                  args=(amount_key, increment, lot.get("highest_bid"), revision_key), disabled=not can_bid, width="stretch")
-                    st.button("금액 초기화", key=f"live_reset_{lot['id']}", on_click=_reset_amount, width="stretch",
-                              args=(amount_key, lot.get("highest_bid"), revision_key), disabled=not can_bid,
-                              help="입찰 예정 금액을 현재 최고가로 돌립니다. 접수된 입찰은 변경하지 않습니다.")
-                st.button(f"{amount:,} P 입찰하기", type="primary", width="stretch", key=f"live_bid_{lot['id']}_{revision}", disabled=not can_bid,
-                    on_click=_submit_bid, args=(live, token, event_id, lot["id"], amount_key, request_key, amount),
-                    kwargs={"revision_key": revision_key, "displayed_revision": revision})
+                           and remaining > 0 and len(own_team["players"]) < 5)
+                control = {"team_name": own_team["name"], "remaining": own_team["remaining"],
+                           "can_bid": can_bid, "context": context}
+            render_live_panel(display_state, key=component_key, control=control,
+                              transport=_transport_frame(event_id, context, view_received_at), on_event_change=on_event)
+            if own_team:
                 if len(own_team["players"]) >= 5:
                     st.caption("팀원 5명이 확정되어 입찰을 마쳤습니다.")
-                elif not can_bid:
-                    st.caption("일시 정지 중에는 입찰할 수 없습니다." if status == "PAUSED" else
-                               "입찰 접수를 확인하고 있습니다." if st.session_state.get(f"live_pending_{event_id}") else
-                               "다음 선수 입찰을 기다려 주세요.")
             elif actor:
                 is_participant = any(player["member_id"] == actor.get("member_id") for player in event["players"])
                 membership = f"참가 중 · {view_team['name']}" if view_team else "참가 중 · 팀 배정 대기" if is_participant else "관전 중"
@@ -625,43 +576,45 @@ def _render_live_auction(event_id, *, page_route=False):
             st.caption("유찰 선수가 남아 있습니다. 진행자가 재경매를 시작할 수 있습니다.")
         else:
             st.caption("다음 경매 선수를 준비하고 있습니다.")
+        if not lot or status == "COMPLETED":
+            render_live_panel(display_state, key=component_key, control=None,
+                              transport=_transport_frame(event_id, context, view_received_at), on_event_change=on_event)
         render_remaining(state, key=f"live_remaining_{event_id}")
         lots = state.get("lots", [])
-        with st.expander("경매 참가자 · 진행 현황"):
-            st.dataframe([
-                {"순서": item.get("sequence", index) + 1, "선수": item["riot_id"],
-                 "포지션": ROLE_NAMES.get(item["role"], item["role"]),
-                 "낙찰 포인트": f"{int(item['highest_bid']):,} P" if item["status"] == "SOLD" else "—",
-                 "상태": LOT_LABELS.get(item["status"], item["status"])}
-                for index, item in enumerate(lots)
-            ], hide_index=True, height=280)
+        progress = st.expander("경매 참가자 · 진행 현황", key=f"live_progress_{event_id}", on_change="rerun")
+        with progress:
+            if progress.open:
+                st.dataframe([
+                    {"순서": item.get("sequence", index) + 1, "선수": item["riot_id"],
+                     "포지션": ROLE_NAMES.get(item["role"], item["role"]),
+                     "낙찰 포인트": f"{int(item['highest_bid']):,} P" if item["status"] == "SOLD" else "—",
+                     "상태": LOT_LABELS.get(item["status"], item["status"])}
+                    for index, item in enumerate(lots)
+                ], hide_index=True, height=280)
         sale_correction_control(event, state, token, actor, from_live=True)
     with history, st.container(key=f"auction_history_panel_{event_id}", border=True, gap="small"):
         st.subheader("입찰 기록")
         cancelled_ids = {item["id"] for item in state.get("lots", []) if item["status"] == "CANCELLED"}
         bids = [item for item in state.get("bids", []) if item["lot_id"] not in cancelled_ids]
         archived_bids = [item for item in state.get("bids", []) if item["lot_id"] in cancelled_ids]
-        empty_bids = st.empty()
-        if not bids:
-            empty_bids.caption("접수된 입찰이 없습니다.")
-        with st.container(height=520, border=False, key=f"auction_bid_list_{event_id}"):
-            for bid in bids[:30]:
-                name = bid.get("team_name") or teams.get(bid["team_id"], {}).get("name", "")
-                with st.container(key=f"auction_bid_card_{event_id}_{bid['id']}", border=True, gap="xxsmall"):
-                    with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center", gap="xsmall"):
-                        st.markdown(f"**{bid['amount']:,} P**")
-                        st.caption(stamp(bid.get("created_at")))
-                    st.text(name)
-                    st.caption(f"팀장 {bid.get('riot_id', '')}")
+        render_history([{"id": bid["id"], "amount": f"{bid['amount']:,} P",
+                         "time": stamp(bid.get("created_at")),
+                         "team": bid.get("team_name") or teams.get(bid["team_id"], {}).get("name", ""),
+                         "captain": bid.get("riot_id", "")} for bid in bids[:30]],
+                       key=f"auction_bid_list_{event_id}")
         if archived_bids:
-            with st.expander("초기화·취소 전 입찰 기록"):
-                st.dataframe([{"시각": stamp(bid.get("created_at")), "팀": bid.get("team_name") or teams.get(bid["team_id"], {}).get("name", ""),
-                               "팀장": bid.get("riot_id", ""), "입찰 포인트": bid["amount"]}
-                              for bid in archived_bids], hide_index=True, height=220)
-        with st.expander("진행 기록"):
-            event_labels = {"CONFIGURE": "경매 설정", "START": "경매 시작", "LOT_OPEN": "선수 경매 시작", "BID": "입찰 접수", "SOLD": "낙찰", "UNSOLD": "유찰", "PAUSE": "일시정지", "RESUME": "경매 재개", "RETRY_UNSOLD": "재경매", "COMPLETED": "경매 완료", "CANCELLED": "경매 취소", "SALE_CORRECTION": "낙찰 정정", "RESET": "경매 초기화"}
-            for item in state.get("events", [])[:20]:
-                detail = json.loads(item["detail"])
-                player = next((row["riot_id"] for row in lots if row["member_id"] == detail.get("member_id")), "")
-                st.caption(f"{stamp(item['created_at'])} · {event_labels.get(item['type'], item['type'])} {player}")
+            expander = st.expander("초기화·취소 전 입찰 기록", key=f"live_archived_{event_id}", on_change="rerun")
+            with expander:
+                if expander.open:
+                    st.dataframe([{"시각": stamp(bid.get("created_at")), "팀": bid.get("team_name") or teams.get(bid["team_id"], {}).get("name", ""),
+                                   "팀장": bid.get("riot_id", ""), "입찰 포인트": bid["amount"]}
+                                  for bid in archived_bids], hide_index=True, height=220)
+        expander = st.expander("진행 기록", key=f"live_events_{event_id}", on_change="rerun")
+        with expander:
+            if expander.open:
+                event_labels = {"CONFIGURE": "경매 설정", "START": "경매 시작", "LOT_OPEN": "선수 경매 시작", "BID": "입찰 접수", "SOLD": "낙찰", "UNSOLD": "유찰", "PAUSE": "일시정지", "RESUME": "경매 재개", "RETRY_UNSOLD": "재경매", "COMPLETED": "경매 완료", "CANCELLED": "경매 취소", "SALE_CORRECTION": "낙찰 정정", "RESET": "경매 초기화"}
+                for item in state.get("events", [])[:20]:
+                    detail = json.loads(item["detail"])
+                    player = next((row["riot_id"] for row in lots if row["member_id"] == detail.get("member_id")), "")
+                    st.caption(f"{stamp(item['created_at'])} · {event_labels.get(item['type'], item['type'])} {player}")
     return True

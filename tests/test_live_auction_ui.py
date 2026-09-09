@@ -23,6 +23,7 @@ from roly.core import Core, ROLES
 from roly.live_auction import LiveAuction
 from roly.tournament import TournamentService
 from roly.ui import services
+from tests.live_panel_client import panel_client
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +90,8 @@ class LiveAuctionUITests(unittest.TestCase):
         self.assertFalse(app.exception, [error.message for error in app.exception])
 
     def widget(self, app, kind, label):
+        if label in ("입찰하기", "입찰할 포인트", "금액 초기화", "+5", "+10", "+20", "+30", "+50", "+70", "+100"):
+            return panel_client(app).widget(kind, label)
         matches = [widget for widget in getattr(app, kind)
                    if (kind == "button" and label == "입찰하기" and (widget.key or "").startswith("live_bid_"))
                    or (label != "입찰하기" and widget.label == label)]
@@ -98,6 +101,9 @@ class LiveAuctionUITests(unittest.TestCase):
     def click(self, app, label):
         self.widget(app, "button", label).click().run()
         self.healthy(app)
+
+    def client(self, app):
+        return panel_client(app)
 
     def start(self):
         self.live.configure(self.admin, self.event_id, bid_seconds=10)
@@ -215,7 +221,8 @@ class LiveAuctionUITests(unittest.TestCase):
         signal.json_trigger_value = json.dumps([{"event": "sync", "value": {"sequence": 1, "source": "visibility"}}])
         captain._run(states)
         self.healthy(captain)
-        self.assertEqual(len(self.presentation(captain, "auction_sync")), 1)
+        self.assertEqual(len(self.presentation(captain, "auction_sync")), 0)
+        self.assertEqual(len(self.presentation(captain, "stage")), 1)
         self.assertFalse(self.widget(captain, "button", "입찰하기").disabled)
         self.assertFalse(any("진행자가 경매를 준비" in item.value for item in captain.caption))
 
@@ -281,7 +288,7 @@ class LiveAuctionUITests(unittest.TestCase):
         self.live.place_bid(self.tokens[1], self.event_id, lot_id, 10, str(uuid4()))
         captain = self.app(self.tokens[0])
         before = self.state()
-        request_key = captain.session_state[f"live_request_{lot_id}"]
+        request_key = self.client(captain).request_id
         team_names = [team["name"] for team in before["teams"]]
         self.assertEqual(self.presentation(captain, "team")[0]["team"]["name"], team_names[0])
         # Both edges wrap; each arrow selects a view, never mutates a team.
@@ -289,7 +296,7 @@ class LiveAuctionUITests(unittest.TestCase):
             self.click(captain, label)
             self.assertEqual(self.presentation(captain, "team")[0]["team"]["name"], team_names[index])
             self.assertEqual(self.state(), before)
-            self.assertEqual(captain.session_state[f"live_request_{lot_id}"], request_key)
+            self.assertEqual(self.client(captain).request_id, request_key)
         # A captain looking at team 3 still bids for their own team 1.
         self.click(captain, "+5")
         self.click(captain, "입찰하기")
@@ -303,11 +310,11 @@ class LiveAuctionUITests(unittest.TestCase):
         lot_id = self.state()["current_lot"]["id"]
         self.click(captain, "+70")
         before = self.state()
-        request_key = captain.session_state[f"live_request_{lot_id}"]
+        request_key = self.client(captain).request_id
         self.click(captain, "금액 초기화")
         self.assertEqual(self.widget(captain, "number_input", "입찰할 포인트").value, 0)
         self.assertEqual(self.state(), before)
-        self.assertEqual(captain.session_state[f"live_request_{lot_id}"], request_key)
+        self.assertEqual(self.client(captain).request_id, request_key)
         self.live.place_bid(self.tokens[1], self.event_id, lot_id, 20, str(uuid4()))
         captain.run()
         self.healthy(captain)
@@ -319,45 +326,26 @@ class LiveAuctionUITests(unittest.TestCase):
             self.assertEqual(self.widget(captain, "number_input", "입찰할 포인트").value, 20)
             self.assertEqual(self.widget(captain, "button", "입찰하기").label, "20 P 입찰하기")
             self.assertEqual(self.state(), before)
-            self.assertEqual(captain.session_state[f"live_request_{lot_id}"], request_key)
+            self.assertEqual(self.client(captain).request_id, request_key)
 
-    def test_stale_amount_cannot_submit_a_price_different_from_the_button(self):
+    def test_immutable_command_cannot_change_amount_when_replayed(self):
         self.start()
         captain = self.app(self.tokens[0])
-        self.assertEqual(self.widget(captain, "button", "입찰하기").label, "0 P 입찰하기")
+        client = self.client(captain)
         self.click(captain, "+10")
-        self.assertEqual(self.widget(captain, "button", "입찰하기").label, "10 P 입찰하기")
-        before = self.state()
-        request_key = captain.session_state[f"live_request_{before['current_lot']['id']}"]
-        # A click can carry an older numeric input snapshot while the server has
-        # already rendered the increment. Keep the current button trigger ID.
-        states = deepcopy(captain._tree.get_widget_states())
-        amount_id = self.widget(captain, "number_input", "입찰할 포인트").proto.id
-        bid_id = self.widget(captain, "button", "입찰하기").proto.id
-        for widget in states.widgets:
-            if widget.id == amount_id:
-                widget.double_value = 0
-            if widget.id == bid_id:
-                widget.trigger_value = True
-        captain._run(states)
+        command = {"lot_id": self.state()["current_lot"]["id"], "amount": 10,
+                   "request_id": client.request_id}
+        client.submit()
         self.healthy(captain)
-        self.assertTrue(any("화면의 금액과 달라 접수하지 않았습니다" in message.value for message in captain.error))
-        after = self.state()
-        self.assertEqual(after["bids"], [])
-        self.assertEqual(after["current_lot"]["closes_at"], before["current_lot"]["closes_at"])
-        self.assertEqual(after["teams"], before["teams"])
-        self.assertEqual(captain.session_state[f"live_request_{before['current_lot']['id']}"], request_key)
-        self.widget(captain, "number_input", "입찰할 포인트").set_value(10).run()
-        self.assertEqual(self.widget(captain, "button", "입찰하기").label, "10 P 입찰하기")
-        self.click(captain, "입찰하기")
         self.assertEqual(self.state()["current_lot"]["highest_bid"], 10)
-
-        # A new manual value must also match the price rendered on its button.
-        self.widget(captain, "number_input", "입찰할 포인트").set_value(25)
-        self.click(captain, "입찰하기")
-        self.assertEqual(len(self.state()["bids"]), 1)
-        self.assertEqual(self.widget(captain, "button", "입찰하기").label, "25 P 입찰하기")
-        self.click(captain, "입찰하기")
+        before = self.state()
+        client.send(command)  # The same accepted intention is a receipt replay.
+        self.assertEqual(self.state(), before)
+        client.send({**command, "amount": 25})
+        self.assertTrue(any("같은 요청 번호" in item.value for item in captain.error))
+        self.assertEqual(self.state(), before)
+        client.draft = 25
+        client.submit()
         self.assertEqual(self.state()["current_lot"]["highest_bid"], 25)
 
     def test_bid_error_does_not_follow_another_account_or_player(self):
@@ -370,6 +358,7 @@ class LiveAuctionUITests(unittest.TestCase):
         captain.run()
         self.healthy(captain)
         self.assertFalse(captain.error)
+        self.widget(captain, "number_input", "입찰할 포인트").set_value(self.state()["teams"][1]["remaining"] + 1)
         self.click(captain, "입찰하기")
         self.assertTrue(captain.error)
         lot = self.state()["current_lot"]
@@ -442,6 +431,10 @@ class LiveAuctionUITests(unittest.TestCase):
         admin = self.app(self.admin)
 
         def progress():
+            key = f"live_progress_{self.event_id}"
+            if key not in admin.session_state or not admin.session_state[key]:
+                admin.session_state[key] = True
+                admin.run()
             return next(table.value for table in admin.dataframe if '낙찰 포인트' in table.value.columns)
 
         self.assertEqual(list(progress().columns), ['순서', '선수', '포지션', '낙찰 포인트', '상태'])
@@ -547,12 +540,12 @@ class LiveAuctionUITests(unittest.TestCase):
                         visit(child, path + (index,))
                 elif node.type == "bidi_component":
                     kind = json.loads(node.proto.json).get("kind")
-                    if kind in ("auction_sync", "stage", "sound"):
+                    if kind in ("stage", "sound"):
                         self.assertNotIn(kind, paths)
                         paths[kind] = path
 
             visit(app._tree)
-            self.assertEqual(set(paths), {"auction_sync", "stage", "sound"})
+            self.assertEqual(set(paths), {"stage", "sound"})
             return paths
 
         self.start()

@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from .riot_api import DataDragonClient, MASTERY_LIMIT, RiotAPIError, RiotClient, load_riot_config, profile_icon_url
 from .member_profile import validate_current_tier
+from .member_ranks import RANK_SELECT, RANK_JOINS, project_member, profile_projection, save_riot_profile
 
 RIOT_DDL = """
 CREATE TABLE IF NOT EXISTS riot_profiles(
@@ -219,11 +220,11 @@ class RiotSync:
             if not ids:
                 return 0
             placeholders = ",".join("?" for _ in ids)
-            members = [dict(row) for row in db.execute(f"""SELECT m.id,m.riot_id,m.canonical_id,m.status,m.current_tier_updated_at,
+            members = [dict(row) for row in db.execute(f"""SELECT m.id,m.riot_id,m.canonical_id,m.status,rs.updated_at AS current_tier_updated_at,
                 j.canonical_id AS job_identity,j.status AS job_status,j.next_attempt,j.requested_at,
                 p.canonical_id AS cache_identity,p.fetched_at
                 FROM members m LEFT JOIN riot_jobs j ON j.member_id=m.id
-                LEFT JOIN riot_profiles p ON p.member_id=m.id WHERE m.id IN ({placeholders})""", ids)]
+                LEFT JOIN riot_profiles p ON p.member_id=m.id {RANK_JOINS} WHERE m.id IN ({placeholders})""", ids)]
             if len(members) != len(ids) or any(member["status"] != "APPROVED" for member in members):
                 raise ValueError("승인된 회원만 Riot 정보를 갱신할 수 있습니다.")
             if not self.config.enabled:
@@ -266,9 +267,9 @@ class RiotSync:
             return results
         placeholders = ",".join("?" for _ in ids)
         with self.core.read_snapshot() as db:
-            rows = db.execute(f"SELECT m.id,m.canonical_id,m.current_tier,m.current_tier_lp,p.payload,p.fetched_at,j.status,j.last_error,j.next_attempt FROM members m LEFT JOIN riot_profiles p ON p.member_id=m.id AND p.canonical_id=m.canonical_id LEFT JOIN riot_jobs j ON j.member_id=m.id AND j.canonical_id=m.canonical_id WHERE m.id IN ({placeholders}) AND m.status='APPROVED'", ids)
+            rows = db.execute(f"SELECT m.id,m.canonical_id,{RANK_SELECT},p.payload,p.fetched_at,j.status,j.last_error,j.next_attempt FROM members m LEFT JOIN riot_profiles p ON p.member_id=m.id AND p.canonical_id=m.canonical_id LEFT JOIN riot_jobs j ON j.member_id=m.id AND j.canonical_id=m.canonical_id {RANK_JOINS} WHERE m.id IN ({placeholders}) AND m.status='APPROVED'", ids)
             for row in rows:
-                payload = public_profile(row["payload"]) or {"current_tier": "", "lp": None,
+                payload = public_profile(profile_projection(row["payload"], row)) or {"current_tier": "", "lp": None,
                     "champions": [], "profile_icon_url": "", "updated_at": ""}
                 error_code = row["last_error"] if row["last_error"] in _ERRORS else ""
                 payload.update(status=row["status"] or "EMPTY", last_error=error_code, error=_ERRORS.get(error_code, ""),
@@ -298,6 +299,8 @@ class RiotSync:
     def _progress(self, job, partial):
         with _metadata_transaction(self.core, "jobs") as db:
             stamp = _time(self.core, db, self.clock)
+            if job["stage"] == 2:
+                partial["rank_fetched_at"] = stamp
             db.execute("UPDATE riot_jobs SET partial_payload=?,stage=?,status='QUEUED',lease_id=NULL,lease_until=0,next_attempt=?,attempts=0,last_error='' WHERE member_id=? AND canonical_id=? AND lease_id=? AND lease_until>?", (_json(partial), job["stage"] + 1, stamp, job["member_id"], job["canonical_id"], job["lease_id"], stamp))
 
     def _failure(self, job, error):
@@ -335,7 +338,8 @@ class RiotSync:
             _job_lock(self.core, db)
             stamp = _time(self.core, db, self.clock)
             current = db.execute("SELECT * FROM riot_jobs WHERE member_id=?", (job["member_id"],)).fetchone()
-            member = db.execute("SELECT * FROM members WHERE id=?", (job["member_id"],)).fetchone()
+            member_row = db.execute("SELECT m.*," + RANK_SELECT + " FROM members m " + RANK_JOINS + " WHERE m.id=?", (job["member_id"],)).fetchone()
+            member = project_member(member_row) if member_row else None
             if not current or current["lease_id"] != job["lease_id"] or current["lease_until"] <= stamp:
                 return
             if (not member or member["status"] != "APPROVED" or member["canonical_id"] != job["canonical_id"]
@@ -348,8 +352,9 @@ class RiotSync:
                        "summoner_level": partial["summoner"].get("summoner_level"),
                        "rank_wins": rank.get("wins"), "rank_losses": rank.get("losses")}
             payload.update(flex_payload)
-            db.execute("UPDATE members SET current_tier=?,current_tier_lp=?,current_tier_source='riot',current_tier_updated_at=?,updated_at=? WHERE id=? AND canonical_id=?", (tier, lp, updated, updated, job["member_id"], job["canonical_id"]))
-            db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?) ON CONFLICT(member_id) DO UPDATE SET canonical_id=excluded.canonical_id,payload=excluded.payload,fetched_at=excluded.fetched_at", (job["member_id"], job["canonical_id"], _json(payload), stamp))
+            db.execute("UPDATE members SET updated_at=? WHERE id=? AND canonical_id=?", (updated, job["member_id"], job["canonical_id"]))
+            save_riot_profile(db, job["member_id"], job["canonical_id"], payload, stamp,
+                              rank_fetched_at=partial.get("rank_fetched_at"))
             db.execute("UPDATE riot_jobs SET status='DONE',stage=4,partial_payload='{}',last_error='',lease_id=NULL,lease_until=0,attempts=0 WHERE member_id=? AND lease_id=?", (job["member_id"], job["lease_id"]))
 
     def process_one(self):

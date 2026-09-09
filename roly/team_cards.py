@@ -9,6 +9,7 @@ import streamlit as st
 from .auction_components import player_data
 from .core import identity
 from .riot_profile import public_profile
+from .member_ranks import RANK_SELECT, RANK_JOINS, profile_projection
 from .ui import ROLE_NAMES
 
 
@@ -23,8 +24,8 @@ def cached_team_profiles(core, event):
         return {}
     marks = ",".join("?" for _ in member_ids)
     with closing(core.connect()) as db:
-        rows = db.execute(f"SELECT m.id,m.canonical_id,rp.payload FROM members m JOIN riot_profiles rp "
-                          f"ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id "
+        rows = db.execute(f"SELECT m.id,m.canonical_id,rp.payload,{RANK_SELECT} FROM members m JOIN riot_profiles rp "
+                          f"ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id {RANK_JOINS} "
                           f"WHERE m.id IN ({marks}) AND m.status='APPROVED'", member_ids).fetchall()
     saved = {row["id"]: row for row in rows}
     profiles = {}
@@ -36,7 +37,7 @@ def cached_team_profiles(core, event):
             matching = identity(player["riot_id"])[1] == row["canonical_id"]
         except ValueError:
             matching = False
-        profile = public_profile(row["payload"]) if matching else None
+        profile = public_profile(profile_projection(row["payload"], row)) if matching else None
         if profile:
             profiles[player["member_id"]] = profile
     return profiles

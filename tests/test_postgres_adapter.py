@@ -101,6 +101,26 @@ class PostgresAdapterTests(unittest.TestCase):
         capability.start()
         self.addCleanup(capability.stop)
 
+    def test_complete_live_view_accepts_safe_clock_and_coalesce_in_one_batch(self):
+        from roly.core import session_query
+        from roly.live_auction import LiveAuction
+        raw = RecordingDriver()
+        database = PostgresConnection("rolymoly", raw)
+        database.execute("BEGIN")
+        statements = [session_query("synthetic-session"), *LiveAuction._view_statements(19),
+                      ("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", None)]
+        result = database.fetch_batches(statements)
+        self.assertEqual(len(result), 9)
+        self.assertEqual(len(raw.pipeline_batches[-1]), 9)
+        self.assertTrue(database.in_transaction)
+        calls = len(raw.calls)
+        for query in ("SELECT EXTRACT(EPOCH FROM evil.clock_timestamp())::double precision",
+                      "SELECT COALESCE(pg_advisory_xact_lock(7),0)",
+                      "SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision, pg_sleep(1)"):
+            with self.assertRaises(sqlite3.ProgrammingError):
+                database.fetch_batches([(query, None)])
+        self.assertEqual(len(raw.calls), calls)
+
     def test_row_unpack_index_and_dict_match_sqlite_with_duplicate_columns(self):
         with sqlite3.connect(":memory:") as database:
             database.row_factory = sqlite3.Row

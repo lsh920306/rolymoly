@@ -23,6 +23,12 @@ CSS = """
 * { box-sizing:border-box; }
 .auction-component { min-width:0; }
 .panel { background:#fff; border:1px solid #dce1e8; border-radius:16px; padding:18px; }
+.bid-history { height:520px; overflow:auto; display:flex; flex-direction:column; gap:9px; scrollbar-width:thin; }
+.history-card { padding:13px; border:1px solid #dce1e8; background:#fff; border-radius:12px; color:#182c49; }
+.history-card header { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:7px; }
+.history-card strong { font-size:16px; }
+.history-card time,.history-captain { color:#536176; font-size:12px; }
+.history-team { font-size:14px; margin-bottom:5px; }
 .row { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
 .muted { color:#536176; font-size:13px; line-height:1.5; }
 .name { font-size:15px; font-weight:700; line-height:1.5; overflow-wrap:anywhere; }
@@ -157,7 +163,7 @@ export default function({parentElement, data}) {
     return box;
   };
   const cleanImages=()=>{for(const img of imageHandlers)img.onerror=null;};
-  const staticView=['overview','team','queue','remaining'].includes(data?.kind);
+  const staticView=['overview','team','queue','remaining','history'].includes(data?.kind);
   const staticSignature=staticView ? JSON.stringify(data) : null;
   if(staticView && root.dataset.staticSignature===staticSignature)return root._rolyStaticCleanup;
   if(staticView)root._rolyStaticCleanup?.();
@@ -302,6 +308,17 @@ export default function({parentElement, data}) {
     }
     if(!data.groups.some(group=>group.players.length))scroll.append(make('div','muted','대기 중인 선수가 없습니다.'));
     panel.append(scroll);return remember(panel);
+  }
+  if(data?.kind==='history'){
+    const list=make('section','bid-history');list.setAttribute('aria-label','입찰 기록 목록');
+    if(!data.bids.length)list.append(make('p','muted','접수된 입찰이 없습니다.'));
+    for(const bid of data.bids){
+      const card=make('article','history-card');card.dataset.bidId=String(bid.id);
+      const header=make('header','');header.append(make('strong','',bid.amount),make('time','',bid.time));
+      card.append(header,make('div','history-team',bid.team),make('div','history-captain','팀장 '+bid.captain));
+      list.append(card);
+    }
+    return remember(list);
   }
   if(data?.kind==='sound'){
   const memory = parentElement._rolyAuctionAudio ||= { lastBid:null, initialized:false, enabled:false, ctx:null, count:0, volume:.8, eventId:data.event_id };
@@ -549,6 +566,12 @@ def stage_data(state, *, elapsed_seconds=0):
         "show_clock": status != "READY" and bool(not waiting or state.get("next_at") is not None or status == "PAUSED"),
         "ticking": ticking, "bid_id": state["bids"][0]["id"] if state.get("bids") else None,
         "rule": f"입찰 +5초 · 최대 {state['bid_seconds']}초 · 다음 선수 준비 3초"}
+
+
+def render_history(bids, key):
+    """A stable DOM list instead of dozens of Streamlit blocks per refresh."""
+    return _renderer()(data={"kind": "history", "bids": bids[:30]}, key=key,
+                       height="content", width="stretch")
 
 
 def render_stage(state, key, *, elapsed_seconds=0):

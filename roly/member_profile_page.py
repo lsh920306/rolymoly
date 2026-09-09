@@ -25,7 +25,7 @@ def profile_header(member, profile):
     icon = profile.get("profile_icon_url") if profile else ""
     avatar = f'<img src="{escape(icon, quote=True)}" alt="소환사 프로필">' if icon else f'<span>{escape(name[:1])}</span>'
     tier = saved_tier(profile["current_tier"], profile.get("lp")) if profile else (saved_tier(member["current_tier"], member["current_tier_lp"]) if member["current_tier"] else "미입력")
-    rank = "Riot 조회 전 · 수기 입력" if not profile else "한국 서버"
+    rank = "한국 서버" if profile else ("Riot API · 상세 정보 없음" if member.get("current_tier_source") == "riot" else "Riot 조회 전 · 수기 입력")
     level = f"레벨 {profile['summoner_level']}" if profile and "summoner_level" in profile else ""
     record = ""
     if profile and "rank_wins" in profile and "rank_losses" in profile:

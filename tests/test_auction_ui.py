@@ -25,21 +25,15 @@ class AuctionLayoutTests(unittest.TestCase):
             node_type = getattr(node, "type", None)
             if node_type == "bidi_component":
                 kind = json.loads(node.proto.json).get("kind")
-                if kind in ("team", "stage"):
+                if kind in ("team", "stage", "history"):
                     found[kind] = path
-            elif node_type in ("number_input", "button"):
-                key = node.key or ""
-                if key.startswith("live_amount_"):
-                    found["amount"] = path
-                elif key.startswith("live_bid_"):
-                    found["bid"] = path
             elif node_type == "expander" and node.label == "진행 기록":
-                found["history"] = path
+                found["events"] = path
             for index, child in getattr(node, "children", {}).items():
                 walk(child, (*path, index))
 
         walk(app._tree)
-        self.assertEqual(set(found), {"team", "stage", "amount", "bid", "history"})
+        self.assertEqual(set(found), {"team", "stage", "history", "events"})
         return found
 
     def test_bid_error_does_not_move_fragment_controls(self):

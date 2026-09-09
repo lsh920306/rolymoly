@@ -45,7 +45,7 @@ def clear_login():
     st.session_state.pop("t_auction_settings_review", None)
     st.session_state.pop("_clan_profile_editor", None)
     for key in list(st.session_state):
-        if key.startswith(("live_amount_", "live_request_", "live_pending_", "live_notice_", "sale_preview", "member_edit_context_", "registration_edit_", "admin_adjust_request_", "admin_membership_context_", "t_confirm_roster_")):
+        if key.startswith(("live_amount_", "live_request_", "live_pending_", "live_command_", "live_transport_", "live_notice_", "sale_preview", "member_edit_context_", "registration_edit_", "admin_adjust_request_", "admin_membership_context_", "t_confirm_roster_")):
             st.session_state.pop(key, None)
 
 

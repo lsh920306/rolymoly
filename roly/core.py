@@ -16,6 +16,7 @@ from uuid import UUID
 
 from .auth import AUTH_DDL, PersonalAuth, password_digest, password_material, username_value
 from .member_profile import UNSET, validate_clan_tier, validate_current_tier
+from .member_ranks import RANK_SELECT, RANK_JOINS, project_member, save_manual_rank
 
 ROLES = ("TOP", "JG", "MID", "AD", "SUP")
 ROLE_ALIASES = {"탑": "TOP", "정글": "JG", "미드": "MID", "원딜": "AD", "서폿": "SUP", "바텀": "AD", "ADC": "AD", "SUPPORT": "SUP", "JUNGLE": "JG"}
@@ -28,7 +29,7 @@ SCORE_ADJUSTMENT_DDL = """CREATE TABLE IF NOT EXISTS score_adjustment_requests(
 # These indexed aggregates run on the database server in one statement. Keeping
 # them together avoids per-member network round trips without changing ledger
 # semantics: corrections/voids already contribute compensating ledger entries.
-_MEMBER_SELECT = """SELECT m.*,
+_MEMBER_SELECT = """SELECT m.*,""" + RANK_SELECT + """,
     m.base_score + COALESCE((SELECT SUM(s.amount) FROM score_ledger s WHERE s.member_id=m.id),0) AS score,
     (SELECT COUNT(*) FROM game_players p JOIN games g ON p.game_id=g.id
         WHERE p.member_id=m.id AND g.status='CONFIRMED' AND g.kind='NORMAL' AND p.team=g.winner) AS wins,
@@ -37,7 +38,14 @@ _MEMBER_SELECT = """SELECT m.*,
     COALESCE((SELECT SUM(a.units) FROM award_ledger a WHERE a.member_id=m.id),0) AS award_units
     ,(SELECT r.status FROM registration_requests r WHERE r.member_id=m.id) AS registration_status
     ,COALESCE((SELECT r.rejection_reason FROM registration_requests r WHERE r.member_id=m.id),'') AS rejection_reason
-    FROM members m"""
+    FROM members m""" + RANK_JOINS
+
+SESSION_SELECT = "SELECT a.id,a.username,a.display_name,a.role,a.member_id,m.status AS member_status,r.status AS registration_status,COALESCE(r.rejection_reason,'') AS rejection_reason,s.expires_at FROM sessions s JOIN accounts a ON a.id=s.account_id LEFT JOIN members m ON m.id=a.member_id LEFT JOIN registration_requests r ON r.account_id=a.id WHERE s.token_hash=? AND s.expires_at>? AND a.active=1 AND ((a.member_id IS NULL AND a.role<>'member') OR m.status='APPROVED' OR (a.role='member' AND m.status='PENDING'))"
+
+
+def session_query(token):
+    """Same current-session check for individual and batched read paths."""
+    return SESSION_SELECT, (hashlib.sha256(str(token).encode()).hexdigest(), now())
 
 
 def now():
@@ -181,6 +189,8 @@ class Core(PersonalAuth):
                 for statement in RIOT_DDL.split(";"):
                     if statement.strip():
                         db.execute(statement)
+                from .member_ranks import initialize_ranks
+                initialize_ranks(db)
                 db.execute(SCORE_ADJUSTMENT_DDL)
                 if not db.execute("SELECT 1 FROM policies").fetchone():
                     db.execute("INSERT INTO policies(mode,k,threshold,high_k,effective_at) VALUES('fixed',10,280,15,?)", ("1970-01-01T00:00:00.000000+00:00",))
@@ -299,7 +309,7 @@ class Core(PersonalAuth):
         if not token:
             return None
         with self.read_snapshot(conn) as db:
-            result = db.execute("SELECT a.id,a.username,a.display_name,a.role,a.member_id,m.status AS member_status,r.status AS registration_status,COALESCE(r.rejection_reason,'') AS rejection_reason,s.expires_at FROM sessions s JOIN accounts a ON a.id=s.account_id LEFT JOIN members m ON m.id=a.member_id LEFT JOIN registration_requests r ON r.account_id=a.id WHERE s.token_hash=? AND s.expires_at>? AND a.active=1 AND ((a.member_id IS NULL AND a.role<>'member') OR m.status='APPROVED' OR (a.role='member' AND m.status='PENDING'))", (hashlib.sha256(str(token).encode()).hexdigest(), now())).fetchone()
+            result = db.execute(*session_query(token)).fetchone()
             return dict(result) if result else None
 
     def require_staff(self, conn, token):
@@ -408,7 +418,7 @@ class Core(PersonalAuth):
 
     @staticmethod
     def _member_record(row):
-        result = dict(row)
+        result = project_member(row)
         score, wins, losses, units = (result.pop(key) for key in ("score", "wins", "losses", "award_units"))
         result["score"] = score
         result["primary_role"], result["secondary_role"] = result["main_role"], result["sub_role"]
@@ -502,6 +512,7 @@ class Core(PersonalAuth):
         _job_lock(self, db)
         db.execute("DELETE FROM riot_jobs WHERE member_id=?", (member_id,))
         db.execute("DELETE FROM riot_profiles WHERE member_id=?", (member_id,))
+        db.execute("DELETE FROM member_ranks WHERE member_id=?", (member_id,))
 
     def update_own_riot_id(self, token, riot_id, *, expected_updated_at):
         """Rename the approved session's member without changing account identity.
@@ -529,7 +540,6 @@ class Core(PersonalAuth):
                 raise ValueError("이미 등록된 Riot ID입니다.") from None
             if identity_changed:
                 self._invalidate_riot_identity(db, member_id)
-                db.execute("UPDATE members SET current_tier='',current_tier_lp=NULL,current_tier_source='manual',current_tier_updated_at=NULL WHERE id=?", (member_id,))
             db.execute("UPDATE accounts SET display_name=? WHERE id=? AND member_id=?", (display, actor["id"], member_id))
             self._audit(db, actor, "MEMBER_SELF_RENAME", member_id,
                         {"riot_id_before": old["riot_id"], "riot_id": display,
@@ -563,13 +573,13 @@ class Core(PersonalAuth):
             tier_changed = (current_tier, current_tier_lp) != (old["current_tier"], old["current_tier_lp"])
             tier_updated_at = updated_at if tier_changed else old["current_tier_updated_at"]
             try:
-                db.execute("UPDATE members SET riot_id=?,canonical_id=?,main_role=?,sub_role=?,base_score=?,notes=?,clan_tier=?,current_tier=?,current_tier_lp=?,current_tier_updated_at=?,updated_at=? WHERE id=?", (display, canonical, main_role, sub_role, base_score, old["notes"] if notes is None else notes, clan_tier, current_tier, current_tier_lp, tier_updated_at, updated_at, member_id))
+                db.execute("UPDATE members SET riot_id=?,canonical_id=?,main_role=?,sub_role=?,base_score=?,notes=?,clan_tier=?,updated_at=? WHERE id=?", (display, canonical, main_role, sub_role, base_score, old["notes"] if notes is None else notes, clan_tier, updated_at, member_id))
             except sqlite3.IntegrityError as exc:
                 raise ValueError("이미 등록된 Riot ID입니다.") from exc
-            if api_identity_changed:
-                db.execute("UPDATE members SET current_tier_source='manual',current_tier_updated_at=NULL WHERE id=?", (member_id,))
             if canonical != old["canonical_id"]:
                 self._invalidate_riot_identity(db, member_id)
+            if old["current_tier_source"] != "riot" or api_identity_changed:
+                save_manual_rank(db, member_id, canonical, current_tier, current_tier_lp, tier_updated_at or updated_at)
             db.execute("UPDATE accounts SET display_name=? WHERE member_id=?", (display, member_id))
             if old["base_score"] != base_score:
                 db.execute("INSERT INTO base_history(member_id,base_score,effective_at,reason) VALUES(?,?,?,?)", (member_id, base_score, now(), reason))

@@ -104,8 +104,9 @@ class BidRecoveryBoundaryTests(unittest.TestCase):
         app = fx.app(fx.tokens[0])
         fx.click(app, '+10')
         lot = fx.state()['current_lot']
-        request_key = f"live_request_{lot['id']}"
-        original_request = app.session_state[request_key]
+        client = fx.client(app)
+        original_request = client.request_id
+        original_context = client.sync()["transport"]["context"]
         original_bid = fx.live.place_bid
 
         def disconnect_after_commit(*args, **kwargs):
@@ -116,7 +117,7 @@ class BidRecoveryBoundaryTests(unittest.TestCase):
             fx.live, 'resolve_bid', side_effect=sqlite3.OperationalError('Synthetic private offline')
         ):
             fx.click(app, '입찰하기')
-        self.assertIn(f'live_pending_{fx.event_id}', app.session_state)
+        self.assertIn(f'live_command_pending_{fx.event_id}', app.session_state)
         fx.core.kick_member(fx.admin, fx.captains[0], 'Synthetic permission revocation')
         with self.assertRaises(PermissionError):
             fx.live.resolve_bid(fx.tokens[0], fx.event_id, lot['id'], 10, original_request)
@@ -124,16 +125,18 @@ class BidRecoveryBoundaryTests(unittest.TestCase):
         app.run()
         fx.healthy(app)
         self.assertIsNone(app.session_state['token'])
-        self.assertNotIn(f'live_pending_{fx.event_id}', app.session_state)
-        self.assertNotIn(request_key, app.session_state)
-        self.assertFalse(any((button.key or '').startswith('live_bid_') for button in app.button))
+        self.assertNotIn(f'live_command_pending_{fx.event_id}', app.session_state)
+        self.assertNotIn(f"live_command_ack_{fx.event_id}", app.session_state)
+        self.assertTrue(all(stage.get("control") is None for stage in fx.presentation(app, "stage")))
         app.text_input(key='login_username').set_value('captain1')
         app.text_input(key='login_password').set_value('ui-captain-password')
         fx.click(app, '로그인')
         app.switch_page('app_pages/auction.py').run()
         fx.healthy(app)
         self.assertEqual(fx.core.session(app.session_state['token'])['member_id'], fx.captains[1])
-        self.assertNotEqual(app.session_state[request_key], original_request)
+        self.assertNotEqual(client.sync()["control"]["context"], original_context)
+        self.assertIsNone(client.pending)
+        self.assertNotEqual(client.request_id, original_request)
         self.assertEqual(fx.state(), before)
         fx.click(app, '+10')
         fx.click(app, '입찰하기')
@@ -150,8 +153,8 @@ class BidRecoveryBoundaryTests(unittest.TestCase):
         app = fx.app(fx.tokens[0])
         fx.click(app, '+10')
         lot = fx.state()['current_lot']
-        request_key = f"live_request_{lot['id']}"
-        request = app.session_state[request_key]
+        client = fx.client(app)
+        request = client.request_id
         with patch.object(fx.live, 'place_bid', side_effect=sqlite3.OperationalError('Synthetic offline')), patch.object(
             fx.live, 'resolve_bid', side_effect=sqlite3.OperationalError('Synthetic offline')
         ):
@@ -161,17 +164,17 @@ class BidRecoveryBoundaryTests(unittest.TestCase):
         mapped = _database_error(psycopg.errors.InsufficientPrivilege('Synthetic private error'))
         self.assertIs(type(mapped), sqlite3.DatabaseError)
         with patch.object(fx.live, 'resolve_bid', side_effect=mapped):
-            app.run()
+            client.poll()
         fx.healthy(app)
-        self.assertIn(f'live_pending_{fx.event_id}', app.session_state)
-        self.assertEqual(app.session_state[request_key], request)
+        self.assertIn(f'live_command_pending_{fx.event_id}', app.session_state)
+        self.assertEqual(client.request_id, request)
         self.assertTrue(fx.widget(app, 'button', '입찰하기').disabled)
         self.assertTrue(app.error)
         self.assertFalse(any('Synthetic' in error.value for error in app.error))
-        app.run()
+        client.poll()
         fx.healthy(app)
-        self.assertNotIn(f'live_pending_{fx.event_id}', app.session_state)
-        self.assertNotEqual(app.session_state[request_key], request)
+        self.assertNotIn(f'live_command_pending_{fx.event_id}', app.session_state)
+        self.assertNotEqual(client.request_id, request)
         self.assertEqual(fx.state()['bids'], [])
         fx.click(app, '입찰하기')
         self.assertEqual(len(fx.state()['bids']), 1)

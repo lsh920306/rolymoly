@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from roly.member_ranks import save_riot_profile
 from unittest.mock import patch
 
 from roly.core import Core, ROLES
@@ -61,9 +62,7 @@ class RiotIntegrationTests(unittest.TestCase):
     def cache(self):
         member = self.core.get_member(self.mid)
         with self.core.transaction() as db:
-            db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?)",
-                       (self.mid, member["canonical_id"], json.dumps(PROFILE), 2_000_000_000.0))
-            db.execute("UPDATE members SET current_tier='다이아몬드 2',current_tier_lp=73,current_tier_source='riot',current_tier_updated_at=? WHERE id=?", (PROFILE["updated_at"], self.mid))
+            save_riot_profile(db, self.mid, member["canonical_id"], PROFILE, 2_000_000_000.0)
 
     def test_auction_reads_only_cache_without_changing_roster_or_score(self):
         before = self.competition.get_event(self.event)

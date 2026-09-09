@@ -265,7 +265,7 @@ def run():
                     if account["username"] == "demo":
                         st.session_state.demo_token = next_token
                     for key in list(st.session_state):
-                        if key.startswith(("live_amount_", "live_request_", "live_pending_", "t_confirm_roster_")) or key in ("home_dialog", "t_preparation_dialog", "t_auction_settings_review", "normal_creation_draft", "t_creation_draft", "_clan_profile_editor", "live_reset_event", "live_reset_review"):
+                        if key.startswith(("live_amount_", "live_request_", "live_pending_", "live_command_", "live_transport_", "t_confirm_roster_")) or key in ("home_dialog", "t_preparation_dialog", "t_auction_settings_review", "normal_creation_draft", "t_creation_draft", "_clan_profile_editor", "live_reset_event", "live_reset_review"):
                             st.session_state.pop(key, None)
                     st.session_state.pop("demo_login_error", None)
                     st.session_state.flash = f"{account['label']} 계정으로 전환했습니다."
@@ -332,7 +332,7 @@ def run():
             st.Page("app_pages/normal.py", title="일반내전", icon=":material/sports_esports:"),
             st.Page("app_pages/auction.py", title="경매", icon=":material/gavel:"),
             st.Page("app_pages/events.py", title="경기 기록", icon=":material/emoji_events:"),
-            st.Page("app_pages/join.py", title="내 계정" if actor else "가입 신청", icon=":material/person_add:"),
+            st.Page("app_pages/join.py", title="내 계정" if actor else "회원가입", icon=":material/person_add:"),
         ],
         "관리": [st.Page("app_pages/admin.py", title="운영 관리", icon=":material/tune:",
                         visibility="visible" if actor and actor["role"] == "admin" else "hidden")],
@@ -351,6 +351,6 @@ def run():
     with st.container(gap="small", key=f"page_{page.url_path or 'home'}"):
         if actor and actor.get("member_status") == "PENDING" and page.url_path != "join":
             st.info("가입 승인 후 이용할 수 있습니다. 내 계정에서 신청 상태를 확인해 주세요.")
-            st.page_link("app_pages/join.py", label="내 가입 신청 확인", icon=":material/person:")
+            st.page_link("app_pages/join.py", label="회원가입 상태 확인", icon=":material/person:")
             st.stop()
         page.run()

@@ -8,6 +8,7 @@ import sqlite3
 import tempfile
 from types import SimpleNamespace
 import unittest
+from roly.member_ranks import save_riot_profile
 from unittest.mock import Mock, patch
 
 from streamlit.testing.v1 import AppTest
@@ -234,8 +235,7 @@ class RiotServiceOutageTests(unittest.TestCase):
                 member = self.core.get_member(self.mid, db)
                 payload = {"current_tier": "골드 2", "lp": 35, "updated_at": "2026-09-08T02:00:00+00:00",
                            "champions": [{"id": 22, "name": "애쉬", "points": 12345, "level": 10, "icon_url": ""}]}
-                db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?)",
-                           (self.mid, member["canonical_id"], json.dumps(payload), 1788832800.0))
+                save_riot_profile(db, self.mid, member["canonical_id"], payload, 1788832800.0)
 
     def healthy(self, app):
         self.assertFalse(app.exception, [error.message for error in app.exception])

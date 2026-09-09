@@ -78,7 +78,7 @@ class DeploymentUITests(unittest.TestCase):
         fields["비밀번호 확인"].set_value("synthetic-member-password")
         fields["Riot ID"].set_value("SharedMember#QA")
         app.checkbox[0].check()
-        next(widget for widget in app.button if widget.label == "가입 신청하기").click().run()
+        next(widget for widget in app.button if widget.label == "회원가입").click().run()
         self.healthy(app)
         self.assertEqual(len(self.core.list_members(True)), 1)
         member = self.core.list_members(True)[0]

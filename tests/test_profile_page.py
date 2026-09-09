@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from roly.member_ranks import save_riot_profile
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
@@ -57,9 +58,13 @@ class ProfilePageTests(unittest.TestCase):
     def cache(self, *, canonical=None, payload=None):
         canonical = canonical or self.core.get_member(self.mid)["canonical_id"]
         with self.core.transaction() as db:
-            db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?) "
-                       "ON CONFLICT(member_id) DO UPDATE SET canonical_id=excluded.canonical_id,payload=excluded.payload",
-                       (self.mid, canonical, json.dumps(self.payload if payload is None else payload), 1788832984.0))
+            if canonical != self.core.get_member(self.mid, db)["canonical_id"]:
+                # Simulate a stale legacy rich cache without replacing the
+                # current identity's normalized/manual rank.
+                db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?)",
+                           (self.mid, canonical, json.dumps(self.payload), 1788832984.0))
+                return
+            save_riot_profile(db, self.mid, canonical, self.payload if payload is None else payload, 1788832984.0)
 
     def app(self, member_id, *, profile_database=None):
         app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=25)

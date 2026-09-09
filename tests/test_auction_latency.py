@@ -150,11 +150,13 @@ class AuctionLatencyTests(unittest.TestCase):
             f.healthy(app)
             self.assertEqual(read.call_args.args[1], second_id)
         selected_lot = f.live.get_state(second_id)["current_lot"]["id"]
-        self.assertTrue(any((button.key or "").startswith(f"live_bid_{selected_lot}_") for button in app.button))
+        selected = f.client(app).sync()
+        self.assertEqual(selected["lot"]["id"], selected_lot)
+        self.assertTrue(selected["control"]["can_bid"])
         f.core.logout(f.tokens[0])
         app.run()
         f.healthy(app)
-        self.assertFalse(any((button.key or "").startswith("live_bid_") for button in app.button))
+        self.assertFalse((f.client(app).sync().get("control") or {}).get("can_bid", False))
         self.assertFalse(any(button.key in ("live_pause", "live_resume") for button in app.button))
         self.assertEqual(f.live.get_state(second_id)["bids"], [])
 

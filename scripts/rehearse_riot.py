@@ -27,6 +27,7 @@ from roly.core import Core
 from roly.competition import Competition, ROLES
 from roly.live_auction import LiveAuction
 from roly.member_profile import validate_current_tier
+from roly.postgres import SCHEMA_VERSION
 from roly.tournament import TournamentService
 from roly.riot_api import DataDragonClient, HTTPResponse, RiotAPIError, RiotClient, RiotConfig
 from roly.riot_sync import DatabaseRateLimiter, RiotSync, _metadata_transaction
@@ -160,7 +161,7 @@ def exercise(core, report):
         scores_before = {member["id"]: member["score"] for member in core.list_members()}
         require(sorted(scores_before.values()) == [90] * 5 + [100] * 10 + [110] * 5)
         report.data["counts"].update(members=20, accounts=21, normal_games=1, score_entries=10, preserved_live_bids=1)
-    with report.stage("rebuild_owned_v5_shape_then_upgrade_to_v6_without_row_changes"):
+    with report.stage("rebuild_owned_v5_shape_then_upgrade_to_current_without_row_changes"):
         with core.transaction() as db:
             for table in RIOT_TABLES:
                 db.execute(f"DROP TABLE {table}")
@@ -181,12 +182,12 @@ def exercise(core, report):
             require(all(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0 for table in RIOT_TABLES))
             require(all(row[0] == "manual" for row in db.execute("SELECT current_tier_source FROM members")))
             if core.is_postgres:
-                require(db.execute("SELECT MAX(version) FROM _schema_migrations").fetchone()[0] == 6)
+                require(db.execute("SELECT MAX(version) FROM _schema_migrations").fetchone()[0] == SCHEMA_VERSION)
         require(all(core.session(token)["member_id"] == mid for mid, token in zip(members, tokens)))
         require(core.session(admin)["role"] == "admin")
         require({member["id"]: member["score"] for member in core.list_members()} == scores_before)
         require(live.get_state(event_id)["current_lot"]["highest_bid"] == 5)
-        report.data["counts"].update(upgrade_preserved_tables=len(PRESERVED_TABLES), preserved_sessions=21, schema_version=6)
+        report.data["counts"].update(upgrade_preserved_tables=len(PRESERVED_TABLES), preserved_sessions=21, schema_version=SCHEMA_VERSION)
     with report.stage("new_api_tables_are_private_and_metadata_locks_are_independent"):
         if core.is_postgres:
             from roly.postgres import advisory_key

@@ -108,10 +108,12 @@ class RiotUITests(unittest.TestCase):
         self.assertFalse(sync.queued)
 
     def test_api_member_editor_disables_only_api_tier_fields(self):
+        from roly.member_ranks import save_riot_profile
         mid = self.core.join_member("RankedMember#QA", "TOP", "JG")
         self.core.approve_member(self.token, mid, 100)
         with self.core.transaction() as db:
-            db.execute("UPDATE members SET current_tier='골드 2',current_tier_lp=31,current_tier_source='riot' WHERE id=?", (mid,))
+            save_riot_profile(db, mid, self.core.get_member(mid, db)["canonical_id"],
+                              {"current_tier": "골드 2", "lp": 31}, 100.0)
         app = self.app(EDITOR, self.token)
         app.session_state.mid = mid
         app.run()

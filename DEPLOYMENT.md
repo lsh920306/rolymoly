@@ -51,7 +51,7 @@ Cloud 배포 전의 전체 585개·마지막 수정 영향 54개와 더 이전�
 
 모드 이름이 DB 프로젝트를 자동으로 분리하지는 않습니다. 검수에 사용할 Supabase 프로젝트를 Secrets에서 선택해야 하며, 같은 연결 설정을 넣은 앱과 브라우저는 같은 회원·경매 자료를 봅니다. 체험 데이터는 운영 회원·점수로 이관하지 않습니다. 이전 체험 세션을 배포 모드로 전환하면 토큰·DB 경로·폼을 비우고, 같은 공용 DB의 정상 로그인은 유지합니다.
 
-체험 데이터 버전은 **5**(`roly/demo.py`의 `DEMO_DATA_VERSION`)이며 운영 스키마 버전 **6**과는 다릅니다. 제공된 Riot ID 22명 중 성공한 21명의 공개 티어·숙련도 스냅샷을 사용하고, 체험용 점수·클랜 티어·경기는 별도 예시입니다. 이 파일을 읽는 것만으로 Riot API를 다시 호출하지 않습니다.
+체험 데이터 버전은 **5**(`roly/demo.py`의 `DEMO_DATA_VERSION`)이며 코드가 지원하는 스키마 버전 **7**과는 다릅니다. 제공된 Riot ID 22명 중 성공한 21명의 공개 티어·숙련도 스냅샷을 사용하고, 체험용 점수·클랜 티어·경기는 별도 예시입니다. 이 파일을 읽는 것만으로 Riot API를 다시 호출하지 않습니다.
 
 `[riot] allow_demo`는 로컬 체험의 Riot 조회를 허용하는 별도 옵션입니다. **검수·운영 Cloud Secrets에는 `allow_demo = false`를 유지하세요.** 실제 회원의 수동 갱신은 별도로 설정한 API 키로 사용합니다. 로컬 비밀 설정을 그대로 복사하지 말고 모드와 체험 허용 값을 확인합니다. [공식 Cloud Secrets 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)
 
@@ -115,7 +115,7 @@ Supabase 프로젝트의 **Table Editor → 스키마 선택 `public` → `rolym
 
 Community Cloud에 검수 앱을 만들 때는 **Advanced settings → Secrets** 또는 앱 설정의 **Secrets**에 같은 TOML 내용을 입력합니다. 로컬 파일이 서버로 자동 전송되지는 않습니다. GitHub에 비밀 파일을 올리지 않습니다. [Streamlit Secrets 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management).
 
-`scripts/prepare_storage.py`는 읽기 전용 진단과 달리 비공개 운영 스키마를 준비하는 명령입니다. 현재 코드는 버전 **6**까지 필요한 테이블·컬럼을 추가하며 아래 명령 또는 새 앱의 초기화가 선택한 스키마를 갱신합니다. v5의 신청 메시지·내전 생성 영수증에 v6의 현재 티어 출처와 Riot 캐시·작업·호출 한도 테이블을 더합니다. 기존 `notes`는 내부 메모로 보존하고 `application_notes`는 빈값으로 추가합니다. 기존 메모를 회원에게 공개하거나 외부 자료를 가져오지 않습니다. 별도 QA 스키마의 업그레이드 통과가 실제 운영 스키마의 적용 완료를 의미하지는 않습니다.
+`scripts/prepare_storage.py`는 읽기 전용 진단과 달리 선택한 비공개 스키마를 준비하는 명령입니다. 현재 코드는 버전 **7**까지 지원하며 아래 명령 또는 새 앱의 초기화가 스키마를 갱신합니다. 기존 회원·계정·원장·Riot 캐시와 작업을 보존하고 솔로·자유랭크를 `member_ranks`의 큐별 행에 분리합니다. 신청 메시지와 내부 메모를 합치거나 외부 회원 자료를 가져오지 않습니다. 별도 QA의 업그레이드 성공과 실제 공유 DB 적용 완료는 구분하며, 최종 상태는 [전체 구현 보고서](docs/ROLYMOLY_IMPLEMENTATION_REPORT.md)를 따릅니다.
 
 ```powershell
 $env:ROLYMOLY_DATABASE_TARGET = "supabase://rolymoly"
@@ -182,7 +182,7 @@ $env:ROLYMOLY_DATABASE_TARGET = "supabase://rolymoly"
 
 ## 구현한 PostgreSQL 처리
 
-`Core('supabase://rolymoly')`가 PostgreSQL 백엔드를 선택합니다. SQL 어댑터와 현재 **v6**까지의 스키마 초기화가 기존 서비스의 데이터 형식·트랜잭션 계약을 유지합니다. 아래 기본 처리에는 과거 실제 PostgreSQL 검증 근거가 있으며, 최신 전체·원격 재검증 결과는 [QA 보고](QA_SCENARIOS.md)와 [Riot 연동 보고](RIOT_API_REPORT.md)에서 확인합니다. 과거 v5 결과를 v6 전체 검증으로 간주하지 않습니다.
+`Core('supabase://rolymoly')`가 PostgreSQL 백엔드를 선택합니다. SQL 어댑터와 현재 **v7**까지의 스키마 초기화는 기존 서비스의 트랜잭션 계약을 유지하며 화면의 현재 랭크는 정규화된 큐별 행에서 읽습니다. 아래 처리의 과거 실제 PostgreSQL 검증과 이번 추가 변경의 전체 회귀·업그레이드·배포 검증은 [전체 구현 보고서](docs/ROLYMOLY_IMPLEMENTATION_REPORT.md)에 구분합니다.
 
 - 비공개 `rolymoly` 스키마를 사용하고 `anon`·`authenticated`의 직접 접근 권한을 제거합니다. 브라우저가 DB 계정이나 DB 비밀번호를 받지 않습니다.
 - 입찰·마감·회원·경기 등의 운영 쓰기는 같은 스키마의 트랜잭션 advisory lock을 사용합니다. 입찰·마감·회원 변경·취소와 중복 워커가 같은 잠금 규칙을 따릅니다.

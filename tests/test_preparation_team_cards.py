@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
+from roly.member_ranks import save_riot_profile
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
@@ -80,9 +81,7 @@ class PreparationTeamCardTests(unittest.TestCase):
     def cache(self):
         member = self.core.get_member(self.ids[0])
         with self.core.transaction() as db:
-            db.execute("INSERT INTO riot_profiles(member_id,canonical_id,payload,fetched_at) VALUES(?,?,?,?) "
-                       "ON CONFLICT(member_id) DO UPDATE SET canonical_id=excluded.canonical_id,payload=excluded.payload",
-                       (member["id"], member["canonical_id"], json.dumps(self.payload), 100.0))
+            save_riot_profile(db, member["id"], member["canonical_id"], self.payload, 100.0)
 
     def healthy(self, app):
         self.assertFalse(app.exception, [item.message for item in app.exception])
