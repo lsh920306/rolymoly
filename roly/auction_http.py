@@ -40,11 +40,16 @@ class TransportDiagnostics:
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
         endpoint = next((name for name in ("live", "bid") if path.endswith("/api/auction/" + name)), None)
-        if scope["type"] == "http" and endpoint and endpoint not in self.seen:
+        first = scope["type"] == "http" and endpoint and endpoint not in self.seen
+        if first:
             self.seen.add(endpoint)
-            _logger.warning("Auction HTTP first delivery: endpoint=%s method=%s root_path=%r",
-                            endpoint, scope.get("method"), str(scope.get("root_path", ""))[:128])
-        await self.app(scope, receive, send)
+            _logger.warning("Auction HTTP first delivery: endpoint=%s method=%s path=%r root_path=%r",
+                            endpoint, scope.get("method"), path[:128], str(scope.get("root_path", ""))[:128])
+        async def report_status(message):
+            if first and message["type"] == "http.response.start":
+                _logger.warning("Auction HTTP first response: endpoint=%s status=%s", endpoint, message["status"])
+            await send(message)
+        await self.app(scope, receive, report_status if first else send)
 
 
 class TransportError(Exception):

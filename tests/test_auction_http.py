@@ -144,7 +144,7 @@ class AuctionHTTPTests(unittest.TestCase):
             status, value, _ = self.request(self.envelope(lot), path="/~/+/api/auction/bid")
             self.assertEqual((status, value["ack"]["status"], self.count_bids()), (200, "accepted", 1))
             self.request(self.envelope(), path="/~/+/api/auction/live")
-        self.assertEqual(len(logs.output), 2)
+        self.assertEqual(len(logs.output), 4)
         self.assertNotIn(self.tokens[0], "\n".join(logs.output))
 
     def test_same_uuid_concurrency_reuses_terminal_and_does_not_extend_twice(self):
