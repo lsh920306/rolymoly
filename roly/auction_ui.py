@@ -21,13 +21,21 @@ SESSION_LABELS = {"READY": "시작 대기", "RUNNING": "입찰 중", "PAUSED": "
 TERMINAL_COMMAND_LIMIT = 8192
 
 
-@st.cache_resource
 def live_service(db_path):
-    core, competition = services(db_path)
-    live = LiveAuction(core, competition)
-    if live.has_active_sessions():
-        live.ensure_worker()
+    from roly.service_resources import service_bundle
+    live = service_bundle(db_path)["live"]
+    # services() can predate the first auction in this database. Ensure the
+    # shared owner starts processing even if the creator closes after Start.
+    live.ensure_worker()
     return live
+
+
+def _clear_live_service(db_path=None):
+    from roly.service_resources import clear_services
+    clear_services(db_path)
+
+
+live_service.clear = _clear_live_service
 
 
 def stamp(value):

@@ -213,7 +213,7 @@ class LiveAuction:
             self._log(db, event_id, "START", {}, stamp, actor)
         return self.get_state(event_id) if return_state else None
 
-    def _bidder(self, db, token, event_id):
+    def _bid_actor(self, db, token):
         actor = self.core.session(token, db)
         if not actor or actor["member_id"] is None:
             raise PermissionError("승인 회원과 연결된 팀장 계정으로 로그인해 주세요.")
@@ -221,6 +221,10 @@ class LiveAuction:
         # transaction. A score/history aggregation is unnecessary for bidding.
         if actor["member_status"] != "APPROVED":
             raise PermissionError("승인된 팀장만 입찰할 수 있습니다.")
+        return actor
+
+    def _bidder(self, db, token, event_id):
+        actor = self._bid_actor(db, token)
         teams = list(db.execute("SELECT t.* FROM competition_teams t JOIN competition_players p ON p.event_id=t.event_id AND p.member_id=t.captain_id WHERE t.event_id=? AND t.captain_id=? AND p.participation_status='SELECTED' AND p.team_id=t.id", (event_id, actor["member_id"])))
         if len(teams) != 1:
             raise PermissionError("이 대회의 팀장만 본인 팀으로 입찰할 수 있습니다.")
@@ -228,10 +232,52 @@ class LiveAuction:
 
     def _capacity(self, db, team, amount):
         count, spent = db.execute("SELECT COUNT(*),COALESCE(SUM(price),0) FROM competition_players WHERE team_id=?", (team["id"],)).fetchone()
+        self._check_capacity(team, amount, count, spent)
+
+    @staticmethod
+    def _check_capacity(team, amount, count, spent):
         if count >= 5:
             raise ValueError("팀 정원 5명을 모두 채웠습니다.")
         if amount > team["budget"] - spent:
             raise ValueError("팀의 남은 예산을 초과했습니다.")
+
+    def _bid_snapshot(self, db, token, event_id, lot_id, request_id):
+        """Batch independent validation reads under the existing writer lock.
+
+        Authentication is checked first and is never cached. No decision uses
+        the returned clock until the complete batch has synchronized. Replays
+        still precede current-lot checks, and all writes retain their original
+        transaction and error handling.
+        """
+        actor = self._bid_actor(db, token)
+        statements = [
+            ("SELECT t.* FROM competition_teams t JOIN competition_players p ON p.event_id=t.event_id AND p.member_id=t.captain_id WHERE t.event_id=? AND t.captain_id=? AND p.participation_status='SELECTED' AND p.team_id=t.id", (event_id, actor["member_id"])),
+            ("SELECT * FROM live_bids WHERE request_id=?", (request_id,)),
+            ("SELECT * FROM live_sessions WHERE event_id=?", (event_id,)),
+            ("SELECT status FROM competition_events WHERE id=?", (event_id,)),
+            ("SELECT * FROM live_lots WHERE id=? AND event_id=?", (lot_id, event_id)),
+            ("""SELECT p.team_id,p.participation_status,m.status AS member_status
+                FROM competition_players p JOIN members m ON m.id=p.member_id
+                JOIN live_lots l ON l.event_id=p.event_id AND l.member_id=p.member_id
+                WHERE l.id=? AND l.event_id=?""", (lot_id, event_id)),
+            ("""SELECT p.team_id,p.price FROM competition_players p
+                JOIN competition_teams t ON t.id=p.team_id
+                WHERE t.event_id=? AND t.captain_id=?""", (event_id, actor["member_id"])),
+        ]
+        if not self._injected_clock:
+            statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", None))
+        batches = db.fetch_batches(statements)
+        stamp = self._clock() if self._injected_clock else float(batches.pop()[0][0])
+        teams, receipts, sessions, events, lots, players, roster = batches
+        if len(teams) != 1:
+            raise PermissionError("이 대회의 팀장만 본인 팀으로 입찰할 수 있습니다.")
+        team = dict(teams[0])
+        roster = [row for row in roster if row["team_id"] == team["id"]]
+        first = lambda rows: dict(rows[0]) if rows else None
+        return {"actor": actor, "team": team, "receipt": first(receipts),
+                "session": first(sessions), "event": first(events), "lot": first(lots),
+                "player": first(players), "count": len(roster),
+                "spent": sum(row["price"] for row in roster), "stamp": stamp}
 
     @staticmethod
     def _receipt(row, replayed):
@@ -249,30 +295,41 @@ class LiveAuction:
         except (ValueError, AttributeError) as exc:
             raise ValueError("유효한 입찰 요청 번호(UUID)가 필요합니다.") from exc
         with self.core.transaction() as db:
-            actor, team = self._bidder(db, token, event_id)
+            snapshot = self._bid_snapshot(db, token, event_id, lot_id, request_id) if self.core.is_postgres else None
+            actor, team = (snapshot["actor"], snapshot["team"]) if snapshot is not None else self._bidder(db, token, event_id)
             payload = [event_id, lot_id, amount, actor["id"], actor["member_id"], team["id"]]
             fingerprint = hashlib.sha256(json.dumps(payload).encode()).hexdigest()
-            existing = db.execute("SELECT * FROM live_bids WHERE request_id=?", (request_id,)).fetchone()
+            existing = snapshot["receipt"] if snapshot is not None else db.execute("SELECT * FROM live_bids WHERE request_id=?", (request_id,)).fetchone()
             if existing:
                 if existing["fingerprint"] != fingerprint:
                     raise ValueError("같은 요청 번호로 다른 입찰을 전송할 수 없습니다.")
                 return self._receipt(existing, True)
-            session = self._session(db, event_id)
-            event = self.competition._event(db, event_id)
-            lot = db.execute("SELECT * FROM live_lots WHERE id=? AND event_id=?", (lot_id, event_id)).fetchone()
-            stamp = self._now(db)  # Read after obtaining the write lock, never before waiting.
+            if snapshot is None:
+                session = self._session(db, event_id)
+                event = self.competition._event(db, event_id)
+                lot = db.execute("SELECT * FROM live_lots WHERE id=? AND event_id=?", (lot_id, event_id)).fetchone()
+                stamp = self._now(db)  # Read after obtaining the write lock, never before waiting.
+            else:
+                session, event, lot, stamp = (snapshot[key] for key in ("session", "event", "lot", "stamp"))
+                if session is None:
+                    raise ValueError("실시간 경매 설정을 먼저 저장해 주세요.")
+                if event is None:
+                    raise ValueError("대회를 찾을 수 없습니다.")
             if event["status"] != "AUCTION" or session["status"] != "RUNNING" or session["current_lot_id"] != lot_id or not lot or lot["status"] != "OPEN":
                 raise ValueError("현재 진행 중인 선수에게만 입찰할 수 있습니다.")
             if stamp >= lot["closes_at"]:
                 raise ValueError("입찰 시간이 마감되었습니다.")
             if lot["highest_bid"] is not None and amount <= lot["highest_bid"]:
                 raise ValueError("현재 최고 입찰가보다 높은 금액을 입력해 주세요.")
-            player = db.execute("""SELECT p.team_id,p.participation_status,m.status AS member_status
+            player = snapshot["player"] if snapshot is not None else db.execute("""SELECT p.team_id,p.participation_status,m.status AS member_status
                 FROM competition_players p JOIN members m ON m.id=p.member_id
                 WHERE p.event_id=? AND p.member_id=?""", (event_id, lot["member_id"])).fetchone()
             if not player or player["team_id"] is not None or player["participation_status"] != "SELECTED" or player["member_status"] != "APPROVED":
                 raise ValueError("현재 선수의 참가 상태를 확인해 주세요.")
-            self._capacity(db, team, amount)
+            if snapshot is None:
+                self._capacity(db, team, amount)
+            else:
+                self._check_capacity(team, amount, snapshot["count"], snapshot["spent"])
             # Add five seconds, capped at the selected initial duration.
             # Old saved reset_on_bid=False values do not disable this rule.
             # All validation and replay checks above run before this extension.
@@ -368,11 +425,32 @@ class LiveAuction:
             return self._open_next(db, session, stamp)
         return False
 
+    def _due_candidates(self):
+        """Skip idle writer transactions; these IDs are hints, never authority."""
+        with self.core.read_snapshot() as db:
+            database_clock = self.core.is_postgres and not self._injected_clock
+            clock_sql = "EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision" if database_clock else "?"
+            parameters = None if database_clock else (self._clock(),)
+            return [row[0] for row in db.execute(f"""SELECT s.event_id
+                FROM live_sessions s JOIN competition_events e ON e.id=s.event_id
+                LEFT JOIN live_lots l ON l.id=s.current_lot_id AND l.event_id=s.event_id
+                CROSS JOIN (SELECT {clock_sql} AS stamp) c
+                WHERE s.status IN ('READY','RUNNING','WAITING','PAUSED') AND (
+                    e.status='CANCELLED' OR (e.status='AUCTION' AND (
+                        (s.status='RUNNING' AND l.closes_at<=c.stamp) OR
+                        (s.status='WAITING' AND s.next_at<=c.stamp))))""", parameters)]
+
     def settle_due(self):
         """Apply only server-determined deadlines; callers cannot select a winner."""
+        candidates = self._due_candidates()
+        if not candidates:
+            return []
         changed = []
         with self.core.transaction() as db:
-            sessions = [dict(r) for r in db.execute("SELECT * FROM live_sessions WHERE status IN ('READY','RUNNING','WAITING','PAUSED') ORDER BY event_id")]
+            # A bid, pause or reset may have changed a candidate while the lock
+            # was pending. Re-read its complete state and the DB clock here.
+            placeholders = ",".join("?" for _ in candidates)
+            sessions = [dict(r) for r in db.execute(f"SELECT * FROM live_sessions WHERE event_id IN ({placeholders}) AND status IN ('READY','RUNNING','WAITING','PAUSED') ORDER BY event_id", candidates)]
             for session in sessions:
                 if self._advance(db, session, self._now(db)):
                     changed.append(session["event_id"])
@@ -728,10 +806,31 @@ class LiveAuction:
         """Read identity and auction display from one consistent DB snapshot."""
         with self.core.read_snapshot() as db:
             if self.core.is_postgres:
-                return self._fetch_view(event_id, db, actor_query=session_query(token) if token else None)
-            actor = self.core.session(token, db)
-            state = self.get_state(event_id, conn=db)
-            return actor, state
+                actor, state = self._fetch_view(event_id, db, actor_query=session_query(token) if token else None)
+            else:
+                actor = self.core.session(token, db)
+                state = self.get_state(event_id, conn=db)
+            read_finished = time.monotonic()
+        self._account_for_read_close(state, read_finished)
+        return actor, state
+
+    def _account_for_read_close(self, state, read_finished):
+        """Age the DB sample by observed cleanup time, without guessing transit.
+
+        A pooled read closes with a synchronous ROLLBACK. Its elapsed time is
+        real clock age even though it occurs after the display was assembled.
+        The unmeasured database-to-app one-way transit is not estimated here.
+        """
+        if not state or not self.core.is_postgres or self._injected_clock:
+            return
+        state["server_now"] += max(0, time.monotonic() - read_finished)
+        if state["status"] == "PAUSED":
+            return
+        for lot in state["lots"]:
+            if lot["status"] == "OPEN":
+                lot["remaining_seconds"] = max(0.0, lot["closes_at"] - state["server_now"])
+        if state.get("next_at") is not None:
+            state["next_in_seconds"] = max(0.0, state["next_at"] - state["server_now"])
 
     @staticmethod
     def _view_statements(event_id):
@@ -755,7 +854,11 @@ class LiveAuction:
 
     def get_state(self, event_id, *, conn=None):
         with self.core.read_snapshot(conn) as db:
-            return self._fetch_view(event_id, db)[1]
+            state = self._fetch_view(event_id, db)[1]
+            read_finished = time.monotonic()
+        if conn is None:
+            self._account_for_read_close(state, read_finished)
+        return state
 
     def _fetch_view(self, event_id, db, *, actor_query=None):
         statements = self._view_statements(event_id)

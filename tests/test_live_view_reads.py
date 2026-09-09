@@ -78,6 +78,45 @@ class LiveViewReadTests(unittest.TestCase):
         self.assertNotIn("private-profile-id", json.dumps((actor, state)))
         self.assertFalse(any(key.startswith("_rank_") for row in state["lots"] + state["event"]["players"] for key in row))
 
+    def test_pg_close_elapsed_ages_running_and_transition_clocks_but_not_paused_remaining(self):
+        self.start(bid_seconds=30)
+        base_time = self.clock.value
+        virtual = [100.0]
+
+        @contextmanager
+        def snapshot(conn=None):
+            if conn is not None:
+                yield conn
+                return
+            with self.core.read_snapshot() as db:
+                yield BatchedSQLite(db, [])
+            virtual[0] += 2.0  # Deterministic synchronous pool-return delay.
+
+        facade = SimpleNamespace(is_postgres=True, db_path=self.core.db_path, read_snapshot=snapshot)
+        live = LiveAuction(facade, self.comp)
+        for status in ("RUNNING", "PAUSED", "WAITING"):
+            with self.core.transaction() as db:
+                db.execute("UPDATE live_sessions SET status=?,paused_phase='RUNNING',pause_remaining=30,next_at=? WHERE event_id=?",
+                           (status, base_time + 3 if status == "WAITING" else None, self.event))
+            for method in ("get_view", "get_state"):
+                with self.subTest(status=status, method=method), patch("roly.live_auction.time.monotonic", side_effect=lambda: virtual[0]):
+                    state = live.get_view(self.tokens[0], self.event)[1] if method == "get_view" else live.get_state(self.event)
+                self.assertEqual(state["server_now"], base_time + 2)
+                if status == "PAUSED":
+                    self.assertEqual(state["current_lot"]["remaining_seconds"], 30)
+                elif status == "RUNNING":
+                    self.assertEqual(state["current_lot"]["remaining_seconds"], 28)
+                else:
+                    self.assertEqual(state["next_in_seconds"], 1)
+        # An externally owned transaction is neither closed nor aged as though
+        # a pool-return round trip had occurred.
+        with self.core.read_snapshot() as db:
+            external = BatchedSQLite(db, [])
+            with patch("roly.live_auction.time.monotonic", side_effect=lambda: virtual[0]):
+                state = live.get_state(self.event, conn=external)
+            self.assertEqual(state["server_now"], base_time)
+            self.assertTrue(db.in_transaction)
+
     def test_poll_authorization_and_event_share_snapshot_then_refresh_together(self):
         self.start()
         before = self.live.get_state(self.event)["event"]["title"]

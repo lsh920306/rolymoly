@@ -22,15 +22,18 @@ FORMATS = {"SINGLE": "단판", "LEAGUE": "풀리그", "TOURNAMENT": "토너먼�
 KINDS = {"NORMAL": "일반내전", "AUCTION": "경매"}
 
 
-@st.cache_resource
 def services(path):
-    core = Core(path)
-    competition = Competition(core)
-    from roly.live_auction import LiveAuction
-    live = LiveAuction(core, competition)
-    if live.has_active_sessions():
-        live.ensure_worker()
-    return core, competition
+    from roly.service_resources import service_bundle
+    bundle = service_bundle(path)
+    return bundle["core"], bundle["competition"]
+
+
+def _clear_services(path=None):
+    from roly.service_resources import clear_services
+    clear_services(path)
+
+
+services.clear = _clear_services
 
 
 def context():
@@ -39,10 +42,19 @@ def context():
     return core, competition, token, core.session(token) if token else None
 
 
-@st.cache_resource
-def lounge_service(path):
+@st.cache_resource(show_spinner=False)
+def _lounge_service(path, revision, core_identity, _core):
     from roly.lounge import Lounge
-    return Lounge(services(path)[0])
+    return Lounge(_core)
+
+
+def lounge_service(path):
+    from roly.service_resources import backend_revision
+    core = services(path)[0]
+    return _lounge_service(path, backend_revision(), id(core), core)
+
+
+lounge_service.clear = _lounge_service.clear
 
 
 def heading(title, description):

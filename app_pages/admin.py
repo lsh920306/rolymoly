@@ -90,11 +90,15 @@ with join_tab:
     if not pending:
         st.info("대기 중인 가입 신청이 없습니다.")
     else:
-        st.dataframe([
+        pending_rows = [
             {"Riot ID": member["riot_id"], "주 포지션": member["main_role"],
-             "부 포지션": member["sub_role"], "신청 메시지": member["application_notes"]}
+             "부 포지션": member["sub_role"]}
             for member in pending
-        ], hide_index=True)
+        ]
+        if any(member["application_notes"] for member in pending):
+            for row, member in zip(pending_rows, pending):
+                row["이전 신청 메시지"] = member["application_notes"]
+        st.dataframe(pending_rows, hide_index=True)
         pending_id = st.selectbox(
             "승인할 회원", [member["id"] for member in pending],
             format_func=lambda member_id: member_map[member_id]["riot_id"],
@@ -115,10 +119,14 @@ with join_tab:
             version = sha256(applicant["updated_at"].encode()).hexdigest()[:16]
             form_key = f"admin_review_{actor['id']}_{pending_id}_{version}"
             st.caption(f"검토 중인 신청 · {applicant['riot_id']} · 주 포지션 {applicant['main_role']} · 부 포지션 {applicant['sub_role']}")
-            lp_text = f" · {applicant['current_tier_lp']} LP" if applicant.get("current_tier_lp") is not None else ""
-            st.caption(f"신청자가 입력한 현재 티어 · {applicant.get('current_tier') or '미입력'}{lp_text}")
-            st.caption("신청자가 운영진에게 전한 말")
-            st.text(applicant["application_notes"] or "입력 없음")
+            if applicant.get("current_tier"):
+                lp_text = f" · {applicant['current_tier_lp']} LP" if applicant.get("current_tier_lp") is not None else ""
+                st.caption(f"저장된 현재 티어 · {applicant['current_tier']}{lp_text}")
+            else:
+                st.caption("현재 티어는 가입 승인 후 프로필의 갱신하기로 가져옵니다.")
+            if applicant["application_notes"]:
+                st.caption("이전 신청 메시지")
+                st.text(applicant["application_notes"])
             mode = st.segmented_control(
                 "기본점수 입력 방식", ["직접 입력", "티어 배점"],
                 default="직접 입력", key=f"{form_key}_mode", disabled=stale,

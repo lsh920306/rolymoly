@@ -23,6 +23,15 @@ class HomeUITests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(prefix="roly-home-ui-")
         self.environment = patch.dict(os.environ, {"ROLYMOLY_DATA_DIR": self.directory.name})
         self.environment.start()
+        private_settings = patch("roly.storage_config._runtime_document", side_effect=AssertionError("real settings read"))
+        private_settings.start()
+        self.addCleanup(private_settings.stop)
+        riot_settings = patch("roly.riot_ui.load_riot_config", side_effect=AssertionError("real Riot settings read"))
+        riot_settings.start()
+        self.addCleanup(riot_settings.stop)
+        worker = patch("roly.live_auction.LiveAuction.ensure_worker")
+        worker.start()
+        self.addCleanup(worker.stop)
         self.at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
         self.assert_clean()
         self.core = Core(self.at.session_state["db_path"])
@@ -58,12 +67,11 @@ class HomeUITests(unittest.TestCase):
         self.assertEqual(self.at.selectbox(key="auction_event").value, auction["id"])
         self.assertEqual({key: self.at.session_state[key] for key in identity}, identity)
         self.at.switch_page("app_pages/home.py").run()
-        self.at.button(key="home_create_auction").click().run()
         self.assert_clean()
-        self.assertEqual(self.at.title[0].value, "경매")
-        self.assertTrue(self.at.get("dialog"))
-        self.assertEqual(next(w for w in self.at.text_input if (w.key or "").startswith("t_create_title_")).value, "")
-        self.assertEqual(next(w for w in self.at.segmented_control if (w.key or "").startswith("t_create_count_AUCTION_")).value, 4)
+        self.assertEqual([tab.label for tab in self.at.tabs], ["일반 내전", "경매 내전"])
+        self.assertNotIn("home_create_auction", [button.key for button in self.at.button])
+        self.assertFalse(any("클랜원과 함께할 경매" in item.value for item in self.at.markdown))
+        self.assertFalse(self.at.get("dialog"))
         self.assertEqual({key: self.at.session_state[key] for key in identity}, identity)
         self.at.selectbox(key="space").select("운영 공간").run()
         operating_path = self.at.session_state["db_path"]
@@ -152,13 +160,49 @@ class HomeUITests(unittest.TestCase):
         self.assertEqual(self.at.title[0].value, "라운지")
         self.assertFalse(self.at.metric)
         captions = [item.value for item in self.at.caption]
-        self.assertIn("진행 중인 경매가 없습니다.", captions)
+        self.assertIn("진행 중인 경매 내전이 없습니다.", captions)
         self.assertIn("확정된 경기 기록이 없습니다.", captions)
         self.assertIn("활동 회원 0명  ·  이번 달 확정 경기 0건  ·  진행 중 경매 0개", captions)
-        self.assertIn("진행 중인 일반내전이 없습니다.", captions)
+        self.assertIn("진행 중인 일반 내전이 없습니다.", captions)
         self.assertFalse(any("모임 일정" in item.value for item in [*self.at.subheader, *self.at.caption]))
         self.assertFalse(any((button.key or "").startswith("home_event_") for button in self.at.button))
         self.assertFalse(any("최근 가입 신청" in item.value for item in self.at.markdown))
+
+    def test_event_tabs_show_all_active_rows_and_separate_complete_history_without_detail_reads(self):
+        base = self.comp.list_events()[0]
+        summaries = []
+        active_ids = {"NORMAL": [], "AUCTION": []}
+        complete_ids = []
+        for kind, amount in (("NORMAL", 8), ("AUCTION", 9)):
+            for index in range(amount + 5):
+                event_id = len(summaries) + 1000
+                status = "READY" if index < amount else "COMPLETED" if index < amount + 4 else "CANCELLED"
+                summaries.append({**base, "id": event_id, "title": f"{kind} 목록 {index}", "kind": kind,
+                                  "status": status, "participant_count": 10 if kind == "NORMAL" else 20,
+                                  "team_count": 2 if kind == "NORMAL" else 4})
+                if status == "READY":
+                    active_ids[kind].append(event_id)
+                elif status == "COMPLETED":
+                    complete_ids.append(event_id)
+        with patch.object(Competition, "list_events", return_value=summaries), patch.object(
+            Competition, "get_event", side_effect=AssertionError("home must use saved event summaries")
+        ):
+            self.at.run()
+        self.assert_clean()
+        self.assertEqual([tab.label for tab in self.at.tabs], ["일반 내전", "경매 내전"])
+        for tab, kind in zip(self.at.tabs, ("NORMAL", "AUCTION")):
+            kind_complete_ids = [event["id"] for event in summaries if event["kind"] == kind and event["status"] == "COMPLETED"]
+            self.assertEqual([button.key for button in tab.button if (button.key or "").startswith("home_event_")],
+                             [f"home_event_{event_id}" for event_id in active_ids[kind] + kind_complete_ids])
+            self.assertTrue(any(f" · {10 if kind == 'NORMAL' else 20}명 · " in item.value for item in tab.caption))
+            history = next(item for item in tab.expander if item.label == "완료된 내전 4개")
+            self.assertEqual([button.key for button in history.button], [f"home_event_{event_id}" for event_id in kind_complete_ids])
+        shown = [button.key for button in self.at.button if (button.key or "").startswith("home_event_")]
+        expected = {*active_ids["NORMAL"], *active_ids["AUCTION"], *complete_ids}
+        self.assertEqual(set(shown), {f"home_event_{event_id}" for event_id in expected})
+        self.assertEqual(len(shown), len(expected))
+        self.assertEqual([item.value for item in self.at.subheader].count("내전 목록"), 1)
+        self.assertNotIn("경매 일정", [item.value for item in self.at.subheader])
 
     def test_lounge_card_opens_same_profile_page_using_saved_data(self):
         from roly.lounge import Lounge

@@ -4,6 +4,7 @@ Only server snapshots determine bids, deadlines and team membership. The small
 browser clock interpolates the display; it never closes or awards a lot.
 """
 from datetime import datetime
+from hashlib import sha256
 import re
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -442,15 +443,16 @@ export default function({parentElement, data}) {
 }
 """.replace("__MASTERY_LIMIT__", str(MASTERY_LIMIT))
 
+COMPONENT_REVISION = sha256((HTML + "\0" + CSS + "\0" + JS).encode()).hexdigest()[:16]
 
 @st.cache_resource(scope="session", show_spinner=False)
-def _register(scope):
-    return st.components.v2.component("auction_presentation", html=HTML, css=CSS, js=JS, isolate_styles=True)
+def _register(scope, revision):
+    return st.components.v2.component("auction_presentation_" + revision, html=HTML, css=CSS, js=JS, isolate_styles=True)
 
 
 def _renderer():
     st.session_state.setdefault("_auction_component_scope", uuid4().hex)
-    return _register(st.session_state["_auction_component_scope"])
+    return _register(st.session_state["_auction_component_scope"], COMPONENT_REVISION)
 
 
 def _image_url(value):

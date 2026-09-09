@@ -3,6 +3,7 @@
 The browser only submits immutable intentions. Authorization, deadlines, prices,
 receipts and settlement remain in the existing server services.
 """
+from hashlib import sha256
 from uuid import uuid4
 
 import streamlit as st
@@ -48,7 +49,7 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
   const channel = {
     context, epoch:uuid(), sequence:0, outstanding:null, pending:validCommand(restored) ? {...restored} : null,
     sent:new Map(), lastReplySeq:0, lastContact:now(), nextAt:now(), timeouts:0,
-    bestClock:null, message:'', messageStatus:'', lastFrame:null,resolved:new Set(),metrics:{},
+    bestClock:null, message:'', messageStatus:'', messageLot:null, lastFrame:null,resolved:new Set(),metrics:{},
     save() { try { writePending(this.pending); } catch (_) {} },
     send(force=false) {
       if(this.outstanding && !force) return null;
@@ -81,7 +82,7 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
          ack.lot_id===this.pending.lot_id && ack.amount===this.pending.amount) {
         if(ack.status==='accepted' || ack.status==='rejected') {
           this.message=String(ack.message || (ack.status==='accepted' ? '입찰을 접수했습니다.' : '입찰이 접수되지 않았습니다.')).slice(0,500);
-          this.messageStatus=ack.status==='accepted' ? 'success' : 'error';
+          this.messageStatus=ack.status==='accepted' ? 'success' : 'error';this.messageLot=ack.lot_id;
           this.resolved.add(this.pending.request_id);
           while(this.resolved.size>32)this.resolved.delete(this.resolved.values().next().value);
           this.pending=null;this.save();
@@ -239,9 +240,12 @@ export default function({parentElement,data,setTriggerValue}) {
     nodes.reset.disabled=!editing;
     nodes.submit.disabled=!editing || !validAmount();
     nodes.submit.textContent=live.pending ? '입찰 확인 중…' : (integer(memory.draft) ? memory.draft.toLocaleString('ko-KR')+' P 입찰하기' : '입찰하기');
-    let message=live.message, kind=live.messageStatus;
+    let message=live.messageLot===memory.lot?.id ? live.message : '', kind=message ? live.messageStatus : '';
     if(live.pending) {message='입찰 접수를 확인하고 있습니다.';kind='';}
     else if(!memory.stateAvailable || live.stale()) {message='연결을 확인하고 있습니다.';kind='';}
+    // A definitive response explains this attempt even if the deadline just
+    // passed or another captain has already raised the current highest bid.
+    else if(message && kind) {}
     else if(memory.status==='PAUSED') {message='일시 정지 중입니다.';kind='';}
     else if(!control) {message='이 경매의 팀장만 입찰할 수 있습니다.';kind='';}
     else if(!editing) {message='다음 선수 입찰을 기다려 주세요.';kind='';}
@@ -297,6 +301,7 @@ export default function({parentElement,data,setTriggerValue}) {
 """
 
 JS = STAGE_JS.replace("export default function(", "function renderAuctionStage(", 1) + CHANNEL_JS + PANEL_JS
+COMPONENT_REVISION = sha256((HTML + "\0" + CSS + "\0" + JS).encode()).hexdigest()[:16]
 
 
 def live_panel_data(state, *, control=None, transport):
@@ -318,13 +323,13 @@ def live_panel_data(state, *, control=None, transport):
 
 
 @st.cache_resource(scope="session", show_spinner=False)
-def _register(scope):
-    return st.components.v2.component("auction_live_panel", html=HTML, css=CSS, js=JS, isolate_styles=True)
+def _register(scope, revision):
+    return st.components.v2.component("auction_live_panel_" + revision, html=HTML, css=CSS, js=JS, isolate_styles=True)
 
 
 def render_live_panel(state, *, key, control=None, transport, on_event_change):
     st.session_state.setdefault("_auction_live_panel_scope", uuid4().hex)
-    return _register(st.session_state["_auction_live_panel_scope"])(
+    return _register(st.session_state["_auction_live_panel_scope"], COMPONENT_REVISION)(
         data=live_panel_data(state, control=control, transport=transport), key=key,
         height="content", width="stretch", on_event_change=on_event_change,
     )

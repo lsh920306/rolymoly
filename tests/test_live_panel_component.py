@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
-from roly.auction_live_panel import CHANNEL_JS, JS, live_panel_data, render_live_panel
+from roly.auction_live_panel import CHANNEL_JS, JS, COMPONENT_REVISION, live_panel_data, render_live_panel
 
 
 CHANNEL_HARNESS = r"""
@@ -150,6 +150,37 @@ parent.isConnected=false;cleanup();assert.equal(timers.size,0);
 for(const values of listeners.values())assert.equal(values.size,0);
 """, dom=True)
 
+    def test_definitive_rejection_survives_deadline_and_new_highest_price(self):
+        self.run_js(r"""
+add.onclick();submit.onclick();const bid=sent.at(-1),command=bid.command;
+advance(200);
+data={...data,server_now:1031,lot:{...data.lot,highest_bid:20},
+ stage:{...stage,seconds:0},transport:{...data.transport,frame_id:2,request:bid,
+ ack:{...command,status:'rejected',message:'The bid deadline has passed.'}}};
+cleanup=show();
+assert.equal(submit.disabled,true);
+assert.equal(controls.querySelector('.bid-feedback').textContent,'The bid deadline has passed.');
+assert.match(controls.querySelector('.bid-feedback').className,/error/);
+data={...data,server_now:1031.1,lot:{id:12,status:'OPEN',highest_bid:null},
+ stage:{...stage,lot_id:12,deadline:1061},transport:{...data.transport,frame_id:3}};
+cleanup=show();
+assert.doesNotMatch(controls.querySelector('.bid-feedback').textContent,/deadline has passed/);
+""", dom=True)
+
+    def test_late_receipt_for_previous_lot_cannot_describe_new_lot(self):
+        self.run_js(r"""
+add.onclick();submit.onclick();const bid=sent.at(-1),command=bid.command;
+advance(200);
+data={...data,server_now:1000.3,lot:{id:12,status:'OPEN',highest_bid:null},
+ stage:{...stage,lot_id:12,deadline:1031},transport:{...data.transport,frame_id:2,request:bid}};
+cleanup=show();assert.equal(submit.disabled,true);
+data={...data,transport:{...data.transport,frame_id:3,
+ ack:{...command,status:'accepted',message:'Previous lot accepted.'}}};
+cleanup=show();
+assert.equal(root.dataset.pendingRequest,'');
+assert.doesNotMatch(controls.querySelector('.bid-feedback').textContent,/Previous lot accepted/);
+""", dom=True)
+
     def test_expired_visible_clock_cannot_be_reopened_by_delayed_same_deadline(self):
         self.run_js(r"""
 advance(30000);assert.equal(stageRoot.querySelector('.seconds').textContent,'0초');
@@ -180,12 +211,13 @@ for(const values of listeners.values())assert.equal(values.size,0);
         self.assertFalse(data["available"])
         self.assertNotIn("must-not-appear",json.dumps(data))
         renderer=Mock(return_value="result")
-        with patch("roly.auction_live_panel._register",return_value=renderer), \
+        with patch("roly.auction_live_panel._register",return_value=renderer) as register, \
                 patch("roly.auction_live_panel.st.session_state",{}):
             callback=Mock()
             self.assertEqual(render_live_panel(None,key="live_stage_3",transport=transport,on_event_change=callback),"result")
         self.assertIs(renderer.call_args.kwargs["on_event_change"],callback)
         self.assertEqual(renderer.call_args.kwargs["key"],"live_stage_3")
+        self.assertEqual(register.call_args.args[1], COMPONENT_REVISION)
 
 
 if __name__ == "__main__":

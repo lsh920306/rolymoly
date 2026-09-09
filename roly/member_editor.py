@@ -59,8 +59,9 @@ def member_edit_form(core, token, actor, member_id, *, prefix):
         current_tier, current_lp = current_tier_inputs(reviewed, key, disabled=stale)
         base_score = st.number_input("기본점수", 0, 10000, value=reviewed["base_score"], step=1, key=f"{key}_base", disabled=stale)
         st.caption("전력점수는 기본점수에 경기·수기 증감을 더한 값입니다. 확정된 내전 명단은 당시 정보를 유지합니다.")
-        st.caption("신청자가 운영진에게 전한 말")
-        st.text(reviewed["application_notes"] or "입력 없음")
+        if reviewed["application_notes"]:
+            st.caption("이전 신청 메시지")
+            st.text(reviewed["application_notes"])
         notes = st.text_area("운영 메모", value=reviewed["notes"], max_chars=2000, key=f"{key}_notes", disabled=stale,
                              help="관리자에게만 표시됩니다. 신청자가 입력한 메시지와 별도로 보관합니다.")
         reason = st.text_input("정보 변경 사유", max_chars=1000, key=f"{key}_reason", disabled=stale)

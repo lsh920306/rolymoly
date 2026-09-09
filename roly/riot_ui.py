@@ -8,19 +8,33 @@ from .riot_api import load_riot_config, RiotConfig
 from .storage_config import ConfigError
 
 
-@st.cache_resource(show_spinner=False)
 def _rate_core(path):
-    from .core import Core
-    return Core(path)
+    from .service_resources import service_bundle
+    return service_bundle(path)["core"]
 
 
-@st.cache_resource(show_spinner=False)
 def _service(path, key_hash, rate_path, _core, _config):
     from .riot_sync import RiotSync
+    from .service_resources import backend_revision, riot_resource
     rate_core = _core if rate_path == path else _rate_core(rate_path)
-    sync = RiotSync(_core, config=_config, rate_core=rate_core)
-    sync.ensure_worker()
-    return sync
+    key = (backend_revision(), key_hash, rate_path, id(_core), id(rate_core))
+    return riot_resource(path, key, rate_path, lambda: RiotSync(_core, config=_config, rate_core=rate_core))
+
+
+def _clear_service():
+    from .service_resources import clear_riot
+    clear_riot()
+
+
+_service.clear = _clear_service
+
+
+def _clear_rate_core(path=None):
+    from .service_resources import clear_services
+    clear_services(path)
+
+
+_rate_core.clear = _clear_rate_core
 
 
 def riot_service(core):
