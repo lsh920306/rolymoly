@@ -25,6 +25,28 @@ class AuctionDialogLifecycleTests(unittest.TestCase):
         # half-second auction poll that can already have an update in flight.
         self.assertIsNone(metadata.fragment_id)
 
+    def panel_identity(self, app):
+        """Include its real block path: a stable widget ID alone can remount."""
+        element = self.fixture.client(app).element
+
+        def locate(node, path=()):
+            if node is element:
+                return path
+            for index, child in getattr(node, "children", {}).items():
+                found = locate(child, (*path, index))
+                if found is not None:
+                    return found
+            return None
+
+        path = locate(app._tree)
+        self.assertIsNotNone(path)
+        return element.proto.id, path
+
+    def assert_callback_opener(self, app, label):
+        button = self.fixture.widget(app, "button", label)
+        metadata = app.session_state._state._new_widget_state.widget_metadata[button.proto.id]
+        self.assertIsNotNone(metadata.callback)
+
     def dismiss(self, app):
         dialog = app.get("dialog")[0]
         states = app._tree.get_widget_states()
@@ -61,15 +83,22 @@ _render_live_auction(st.session_state.event_id)
         f = self.fixture
         f.start()
         app = f.app(f.tokens[0])
+        f.client(app).poll()
+        panel = self.panel_identity(app)
+        self.assert_callback_opener(app, "전체 팀 보기")
         f.click(app, "전체 팀 보기")
         self.assert_page_owned_dialog(app, "전체 경매 현황")
+        self.assertEqual(self.panel_identity(app), panel)
         self.assert_poll_does_not_open_dialog("live_overview_event")
         self.dismiss(app)
+        self.assertEqual(self.panel_identity(app), panel)
         self.assertNotIn("live_overview_event", app.session_state)
         for _ in range(2):
             app.run()
             f.healthy(app)
             self.assertFalse(app.get("dialog"))
+            self.assertEqual(self.panel_identity(app), panel)
+            self.assertFalse(any("로그인 또는 경매가 변경" in item.value for item in app.error))
         f.click(app, "+10")
         f.click(app, "입찰하기")
         self.assertEqual([row["amount"] for row in f.state()["bids"]], [10])
@@ -81,6 +110,7 @@ _render_live_auction(st.session_state.event_id)
         f.start()
         app = f.app(f.admin)
         before = f.state()
+        self.assert_callback_opener(app, "경매 초기화")
         f.click(app, "경매 초기화")
         self.assert_page_owned_dialog(app, "경매 초기화")
         self.assert_poll_does_not_open_dialog("live_reset_event")
@@ -101,6 +131,7 @@ _render_live_auction(st.session_state.event_id)
         f.live.pause(f.admin, f.event_id)
         app = f.app(f.admin)
         before = f.state()
+        self.assert_callback_opener(app, "낙찰 정정")
         f.click(app, "낙찰 정정")
         self.assert_page_owned_dialog(app, "낙찰 정정")
         self.assert_poll_does_not_open_dialog("sale_dialog_event")
@@ -113,6 +144,43 @@ _render_live_auction(st.session_state.event_id)
         self.assertEqual(after["lots"], before["lots"])
         self.assertEqual(after["bids"], before["bids"])
         self.assertFalse(app.get("dialog"))
+
+    def test_panel_path_survives_open_unsold_next_player_and_failed_settlement(self):
+        f = self.fixture
+        first = f.start()["current_lot"]
+        app = f.app(f.tokens[0])
+        panel = self.panel_identity(app)
+        self.assertTrue(f.client(app).sync()["control"]["can_bid"])
+
+        f.clock_value = first["closes_at"]
+        f.live.settle_due()
+        app.run()
+        f.healthy(app)
+        self.assertTrue(any("입찰이 없어" in item.value for item in app.info))
+        self.assertEqual(self.panel_identity(app), panel)
+        self.assertFalse(f.client(app).sync()["control"]["can_bid"])
+
+        f.clock_value = f.state()["next_at"]
+        f.live.settle_due()
+        app.run()
+        f.healthy(app)
+        self.assertNotEqual(f.client(app).sync()["lot"]["id"], first["id"])
+        self.assertTrue(f.client(app).sync()["control"]["can_bid"])
+        self.assertEqual(self.panel_identity(app), panel)
+        f.click(app, "+10")
+        f.click(app, "입찰하기")
+        self.assertEqual([bid["amount"] for bid in f.state()["bids"]], [10])
+
+        second = f.state()["current_lot"]
+        f.core.kick_member(f.admin, second["member_id"], "정산 실패 안내 검증")
+        f.clock_value = second["closes_at"]
+        f.live.settle_due()
+        app.run()
+        f.healthy(app)
+        self.assertTrue(any("낙찰 조건" in item.value for item in app.warning))
+        self.assertTrue(any("회원 승인이 해제" in item.value for item in app.caption))
+        self.assertEqual(self.panel_identity(app), panel)
+        self.assertFalse(f.client(app).sync()["control"]["can_bid"])
 
 
 if __name__ == "__main__":

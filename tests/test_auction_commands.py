@@ -42,6 +42,45 @@ class TerminalCommandTests(unittest.TestCase):
         auction_ui._on_live_event(self.live, self.token, self.event_id, "live_stage_12", self.context)
         return deepcopy(self.state.get("live_command_ack_12"))
 
+    def test_empty_component_trigger_does_not_replace_pending_bid_or_notice(self):
+        self.live.place_bid.side_effect = sqlite3.OperationalError("synthetic uncertainty")
+        self.send(self.command)
+        pending = deepcopy(self.state["live_command_pending_12"])
+        ack = deepcopy(self.state["live_command_ack_12"])
+        notice = deepcopy(self.state["live_notice_12"])
+        for component in ({}, {"event": None}, SimpleNamespace(event=None)):
+            with self.subTest(component=type(component).__name__):
+                self.state["live_stage_12"] = component
+                auction_ui._on_live_event(self.live, self.token, self.event_id, "live_stage_12", self.context)
+                self.assertEqual(self.state["live_command_pending_12"], pending)
+                self.assertEqual(self.state["live_command_ack_12"], ack)
+                self.assertEqual(self.state["live_notice_12"], notice)
+        self.live.place_bid.assert_called_once()
+        self.live.resolve_bid.assert_not_called()
+
+    def test_foreign_context_is_rejected_then_only_transport_notice_clears_on_valid_poll(self):
+        self.assertIsNone(self.send(self.command, context="another-account-event"))
+        self.assertTrue(self.state["live_notice_12"]["transport"])
+        self.assertIn("로그인 또는 경매", self.state["live_notice_12"]["message"])
+        self.assertNotIn("live_transport_request_12", self.state)
+        self.live.place_bid.assert_not_called()
+        self.send(None)
+        self.assertNotIn("live_notice_12", self.state)
+        self.assertEqual(self.state["live_transport_request_12"]["context"], self.context)
+        self.live.place_bid.assert_not_called()
+        self.live.resolve_bid.assert_not_called()
+
+    def test_valid_poll_preserves_definitive_bid_rejection_and_terminal_receipt(self):
+        self.live.place_bid.side_effect = ValueError("입찰 시간이 마감되었습니다.")
+        rejected = self.send(self.command)
+        notice = deepcopy(self.state["live_notice_12"])
+        self.send(None)
+        self.assertEqual(self.state["live_notice_12"], notice)
+        self.assertEqual(self.state["live_command_ack_12"], rejected)
+        self.assertEqual(self.send(self.command), rejected)
+        self.live.place_bid.assert_called_once()
+        self.live.resolve_bid.assert_not_called()
+
     def test_confirmed_absent_retry_never_becomes_a_new_write(self):
         self.live.place_bid.side_effect = [sqlite3.OperationalError("synthetic failure"), {"id": 2}]
         self.assertEqual(self.send(self.command)["status"], "pending")

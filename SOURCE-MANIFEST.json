@@ -124,8 +124,8 @@
     "sha256": "46337016c5281c5d87f57ce9c6b7065cb087426839c32e6bb6748b602d838e81"
   },
   "docs/ROLYMOLY_IMPLEMENTATION_REPORT.md": {
-    "bytes": 63902,
-    "sha256": "e07dadee0e4903ef9714e0dff21ac1acd8029a2a2d35482fd9b5832c1260cca1"
+    "bytes": 73935,
+    "sha256": "ab97218b17d6d60044469970d2f439b18762012917b19fb427a6181877616af4"
   },
   "requirements.txt": {
     "bytes": 75,
@@ -152,8 +152,8 @@
     "sha256": "31a507ae8b4143b3877183e271467dbe2d0613fa6734d8783a49a9dd4ec20dcf"
   },
   "roly/auction_ui.py": {
-    "bytes": 40437,
-    "sha256": "513dfd4831c87aa03621c9c8cf0b7426d0f76aac3edf5ad27af0ce2670d28ddd"
+    "bytes": 41409,
+    "sha256": "e7d11ceeb17b3ae8ef73db47db71c5e2b1cd0c3ebef690bdc1ea5cf16803015a"
   },
   "roly/auth.py": {
     "bytes": 16647,
@@ -384,16 +384,16 @@
     "sha256": "948d4a631e20ae34084a04bdd47f2e4df1dbc091d4d9706ee9183bfd4c91784a"
   },
   "tests/test_auction_commands.py": {
-    "bytes": 11362,
-    "sha256": "540fa2c7de985004787e8437eeb375f136e391a5bb83b8f478da6cd0c7eeac2a"
+    "bytes": 13704,
+    "sha256": "0201eaa320e113235d5543ec1d9c22deb38f7e852ad2b0ae3c2a5ebad79afc30"
   },
   "tests/test_auction_components.py": {
     "bytes": 33989,
     "sha256": "aa502c65bf341d50490dd5de1e672b1c7b5813ce2d72d246894f9e71e292b74d"
   },
   "tests/test_auction_dialog_lifecycle.py": {
-    "bytes": 5145,
-    "sha256": "506a4eb44ce118fa18ce9d8736fc2328643c63d0173d944d109adcd2f92a274d"
+    "bytes": 8152,
+    "sha256": "cf6af898ab96622dd99b17b41d8ef15e0e0ee75bc915181fa5aed3480f13a19e"
   },
   "tests/test_auction_fast_paths.py": {
     "bytes": 10848,

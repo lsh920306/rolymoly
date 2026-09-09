@@ -60,12 +60,21 @@ def _on_live_event(live, token, event_id, component_key, context):
         return
     component = st.session_state.get(component_key, {})
     value = component.get("event") if isinstance(component, dict) else getattr(component, "event", None)
+    # CCv2 triggers are transient. An empty/reset trigger is not a foreign
+    # login context and must not replace a pending or definitive bid response.
+    if value is None:
+        return
     try:
         request = clean_envelope(value, context)
     except ValueError as error:
         st.session_state[f"live_notice_{event_id}"] = {
-            "success": False, "message": str(error), "lot_id": None, "token": token}
+            "success": False, "message": str(error), "lot_id": None, "token": token,
+            "transport": True}
         return
+    notice_key = f"live_notice_{event_id}"
+    notice = st.session_state.get(notice_key)
+    if isinstance(notice, dict) and notice.get("transport"):
+        st.session_state.pop(notice_key, None)
     st.session_state[f"live_transport_request_{event_id}"] = request
     st.session_state[f"live_transport_started_{event_id}"] = started
     command = request.get("command")
@@ -153,15 +162,29 @@ def close_auction_reset():
     st.session_state.pop("live_reset_review", None)
 
 
+def _open_live_dialog(event_id, kind):
+    """Request a page-owned dialog before the fragment body starts rendering."""
+    key = {"overview": "live_overview_event", "reset": "live_reset_event",
+           "sale": "sale_dialog_event"}[kind]
+    close_team_overview()
+    close_sale_correction()
+    close_auction_reset()
+    close_auction_settings()
+    st.session_state[key] = event_id
+    st.rerun(scope="app")
+
+
 def auction_reset_control(event_id, *, from_live=False):
+    if from_live:
+        st.button("경매 초기화", key=f"live_reset_open_{event_id}", type="primary",
+                  on_click=_open_live_dialog, args=(event_id, "reset"))
+        return
     if st.button("경매 초기화", key=f"live_reset_open_{event_id}", type="primary"):
         close_team_overview()
         close_sale_correction()
         close_auction_reset()
         close_auction_settings()
         st.session_state.live_reset_event = event_id
-        if from_live:
-            st.rerun(scope="app")
 
 
 @st.dialog("경매 초기화", width="medium", on_dismiss=close_auction_reset)
@@ -282,12 +305,13 @@ def sale_correction_control(event, state, token, actor, *, from_live=False):
             close_sale_correction()
         return
     if any(lot["status"] == "SOLD" for lot in state["lots"]):
-        if st.button("낙찰 정정", key=f"sale_open_{event['id']}"):
+        if from_live:
+            st.button("낙찰 정정", key=f"sale_open_{event['id']}",
+                      on_click=_open_live_dialog, args=(event["id"], "sale"))
+        elif st.button("낙찰 정정", key=f"sale_open_{event['id']}"):
             close_team_overview()
             close_auction_reset()
             st.session_state.sale_dialog_event = event["id"]
-            if from_live:
-                st.rerun(scope="app")
         if not from_live and st.session_state.get("sale_dialog_event") == event["id"]:
             sale_correction_dialog(event["id"])
 
@@ -562,12 +586,9 @@ def _render_live_auction(event_id, *, page_route=False):
         with st.container(horizontal=True, vertical_alignment="center", horizontal_alignment="distribute"):
             st.markdown(f"**팀 현황**  `{list(teams).index(selected_team) + 1}/{len(teams)}`")
             with st.container(horizontal=True, width="content", gap="xxsmall", key=f"live_carousel_tools_{event_id}"):
-                if st.button("전체 팀 보기", icon=":material/grid_view:", help="전체 팀 보기", width=34,
-                             key=f"live_team_overview_{event_id}"):
-                    close_sale_correction()
-                    close_auction_reset()
-                    st.session_state.live_overview_event = event_id
-                    st.rerun(scope="app")
+                st.button("전체 팀 보기", icon=":material/grid_view:", help="전체 팀 보기", width=34,
+                          key=f"live_team_overview_{event_id}",
+                          on_click=_open_live_dialog, args=(event_id, "overview"))
                 st.button("이전 팀", icon=":material/chevron_left:", help="이전 팀", width=34,
                           key=f"live_previous_team_{event_id}", on_click=_view_adjacent_team,
                           args=(team_key, list(teams), -1))
@@ -576,28 +597,36 @@ def _render_live_auction(event_id, *, page_route=False):
                           args=(team_key, list(teams), 1))
         render_team(teams[selected_team], key=f"live_team_card_{event_id}", member_id=actor.get("member_id") if actor else None)
     with center, st.container(gap="small"):
+        # The channel must occupy the same delta path in OPEN, UNSOLD,
+        # waiting and completed states. Conditional messages live inside one
+        # persistent slot rather than inserting siblings before the channel.
+        lot_notice = st.empty()
         if status == "COMPLETED":
-            st.success("경매가 완료되었습니다. 명단과 포지션을 확인하고 대진표를 만드세요.")
-        elif lot:
-            remaining = max(0, float(lot.get("remaining_seconds") or 0))
-            if lot["status"] == "UNSOLD":
-                closed_event = next((item for item in state.get("events", [])
-                    if item["type"] == "UNSOLD" and item.get("lot_id") == lot["id"]), None)
-                failure_reason = json.loads(closed_event["detail"]).get("reason") if closed_event else None
+            lot_notice.success("경매가 완료되었습니다. 명단과 포지션을 확인하고 대진표를 만드세요.")
+        elif lot and lot["status"] == "UNSOLD":
+            closed_event = next((item for item in state.get("events", [])
+                if item["type"] == "UNSOLD" and item.get("lot_id") == lot["id"]), None)
+            failure_reason = json.loads(closed_event["detail"]).get("reason") if closed_event else None
+            with lot_notice.container():
                 if failure_reason or lot.get("highest_team_id") is not None:
                     st.warning("낙찰 조건을 충족하지 못해 유찰되었습니다.")
                     st.caption(failure_reason or "진행자가 해당 선수의 낙찰 실패 기록을 확인해 주세요.")
                     st.caption("참가 상태를 확인한 뒤 재경매를 진행해 주세요.")
                 else:
                     st.info("입찰이 없어 유찰되었습니다. 마지막 선수까지 진행한 뒤 재경매할 수 있습니다.")
-            control = None
-            if own_team:
-                can_bid = (event["status"] == "AUCTION" and status == "RUNNING" and lot["status"] == "OPEN"
-                           and remaining > 0 and len(own_team["players"]) < 5)
-                control = {"team_name": own_team["name"], "remaining": own_team["remaining"],
-                           "can_bid": can_bid, "context": context}
-            render_live_panel(display_state, key=component_key, control=control,
-                              transport=_transport_frame(event_id, context, view_received_at, view_started_at=view_started_at), on_event_change=on_event)
+        elif not lot:
+            lot_notice.caption("유찰 선수가 남아 있습니다. 진행자가 재경매를 시작할 수 있습니다."
+                               if state.get("unsold_count", 0) else "다음 경매 선수를 준비하고 있습니다.")
+        control = None
+        if own_team and lot and status != "COMPLETED":
+            remaining = max(0, float(lot.get("remaining_seconds") or 0))
+            can_bid = (event["status"] == "AUCTION" and status == "RUNNING" and lot["status"] == "OPEN"
+                       and remaining > 0 and len(own_team["players"]) < 5)
+            control = {"team_name": own_team["name"], "remaining": own_team["remaining"],
+                       "can_bid": can_bid, "context": context}
+        render_live_panel(display_state, key=component_key, control=control,
+                          transport=_transport_frame(event_id, context, view_received_at, view_started_at=view_started_at), on_event_change=on_event)
+        if lot and status != "COMPLETED":
             if own_team:
                 if len(own_team["players"]) >= 5:
                     st.caption("팀원 5명이 확정되어 입찰을 마쳤습니다.")
@@ -607,13 +636,6 @@ def _render_live_auction(event_id, *, page_route=False):
                 st.caption(f"{membership} · 이 경매의 팀장만 입찰할 수 있습니다.")
             else:
                 st.caption("본인 계정으로 로그인해 주세요. 이 경매의 팀장으로 지정되면 입찰할 수 있습니다.")
-        elif state.get("unsold_count", 0):
-            st.caption("유찰 선수가 남아 있습니다. 진행자가 재경매를 시작할 수 있습니다.")
-        else:
-            st.caption("다음 경매 선수를 준비하고 있습니다.")
-        if not lot or status == "COMPLETED":
-            render_live_panel(display_state, key=component_key, control=None,
-                              transport=_transport_frame(event_id, context, view_received_at, view_started_at=view_started_at), on_event_change=on_event)
         render_remaining(state, key=f"live_remaining_{event_id}")
         lots = state.get("lots", [])
         progress = st.expander("경매 참가자 · 진행 현황", key=f"live_progress_{event_id}", on_change="rerun")
