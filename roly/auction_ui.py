@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
 from time import monotonic
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import streamlit as st
 
@@ -18,6 +18,7 @@ from roly.ui import ROLE_NAMES, can_edit, perform, services
 KST = timezone(timedelta(hours=9))
 LOT_LABELS = {"QUEUED": "대기", "PENDING": "대기", "OPEN": "입찰 중", "SOLD": "낙찰", "UNSOLD": "유찰", "CANCELLED": "낙찰 취소"}
 SESSION_LABELS = {"READY": "시작 대기", "RUNNING": "입찰 중", "PAUSED": "일시정지", "WAITING": "다음 선수 대기", "COMPLETED": "경매 완료", "CANCELLED": "경매 취소"}
+TERMINAL_COMMAND_LIMIT = 8192
 
 
 @st.cache_resource
@@ -70,7 +71,29 @@ def _on_live_event(live, token, event_id, component_key, context):
     if pending and command != pending["command"]:
         command = pending["command"]
     if command:
-        ack = execute_command(live, token, event_id, command, confirm_only=bool(pending))
+        terminal_key = f"live_command_terminal_{event_id}"
+        terminal = st.session_state.get(terminal_key)
+        if not terminal or terminal["context"] != context:
+            terminal = {"context": context, "acks": {}}
+            st.session_state[terminal_key] = terminal
+        # Match the domain's UUID normalization while echoing the browser's
+        # original spelling in its ACK. Amount and lot must still match.
+        request_id = str(UUID(command["request_id"]))
+        previous = terminal["acks"].get(request_id)
+        if previous:
+            if (previous["lot_id"], previous["amount"]) != (command["lot_id"], command["amount"]):
+                ack = {**command, "status": "rejected", "message": "같은 요청 번호로 다른 입찰을 전송할 수 없습니다."}
+            else:
+                ack = {**previous, "request_id": command["request_id"]}
+        elif len(terminal["acks"]) >= TERMINAL_COMMAND_LIMIT and not pending:
+            # Do not evict a rejection: a delayed retry could otherwise become
+            # a new write. Existing receipts and an unresolved command remain
+            # readable; only a new login context opens another bounded ledger.
+            ack = {**command, "status": "rejected", "message": "입찰 확인 기록이 가득 찼습니다. 로그아웃 후 다시 로그인해 주세요."}
+        else:
+            ack = execute_command(live, token, event_id, command, confirm_only=bool(pending))
+            if ack["status"] in ("accepted", "rejected"):
+                terminal["acks"][request_id] = dict(ack)
         st.session_state[f"live_command_ack_{event_id}"] = {"context": context, **ack}
         if ack["status"] == "pending":
             st.session_state[pending_key] = {"context": context, "command": command}
@@ -410,7 +433,7 @@ def _render_live_auction(event_id, *, page_route=False):
     token = st.session_state.get("token")
     live = live_service(st.session_state.db_path)
     context = context_id(live.core.db_path, token, event_id)
-    for suffix in ("command_pending", "command_ack", "transport_request"):
+    for suffix in ("command_pending", "command_ack", "command_terminal", "transport_request"):
         saved_key = f"live_{suffix}_{event_id}"
         saved = st.session_state.get(saved_key)
         if saved and saved.get("context") != context:

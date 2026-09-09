@@ -152,8 +152,8 @@
     "sha256": "31a507ae8b4143b3877183e271467dbe2d0613fa6734d8783a49a9dd4ec20dcf"
   },
   "roly/auction_ui.py": {
-    "bytes": 38152,
-    "sha256": "e143ba0d3700e86e641816b42a1b0659870fd7f6b21199d15a9b93d67096dcc7"
+    "bytes": 39693,
+    "sha256": "92330ccdd5eea9e3197103938a08453535ddddae0c71a832281e63d23220bafb"
   },
   "roly/auth.py": {
     "bytes": 16647,
@@ -378,6 +378,10 @@
   "tests/test_approval_context.py": {
     "bytes": 8526,
     "sha256": "948d4a631e20ae34084a04bdd47f2e4df1dbc091d4d9706ee9183bfd4c91784a"
+  },
+  "tests/test_auction_commands.py": {
+    "bytes": 11362,
+    "sha256": "540fa2c7de985004787e8437eeb375f136e391a5bb83b8f478da6cd0c7eeac2a"
   },
   "tests/test_auction_components.py": {
     "bytes": 33989,
