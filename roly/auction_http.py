@@ -272,8 +272,23 @@ async def bid_endpoint(request):
     return await handle(request, bidding=True)
 
 
-def routes():
-    return [Route("/api/auction/live", live_endpoint, methods=["POST"]), Route("/api/auction/bid", bid_endpoint, methods=["POST"])]
+def routes(*, base_url=None):
+    """Register APIs below the same configured path as Streamlit's own routes."""
+    if base_url is None:
+        import streamlit as st
+
+        # The Streamlit CLI loads file/environment/flag options before importing
+        # this ASGI entry point. App does not prefix user-supplied routes itself.
+        base_url = st.get_option("server.baseUrlPath")
+    if not isinstance(base_url, str):
+        raise ValueError("The auction API base path must be a string")
+    base_url = base_url.strip("/")
+    if base_url and (any(part in ("", ".", "..") for part in base_url.split("/"))
+                     or any(char in "?#{}\\" or char.isspace() or ord(char) < 32 for char in base_url)):
+        raise ValueError("The auction API base path must be a literal URL path")
+    prefix = "/" + base_url if base_url else ""
+    return [Route(prefix + "/api/auction/live", live_endpoint, methods=["POST"]),
+            Route(prefix + "/api/auction/bid", bid_endpoint, methods=["POST"])]
 
 
 def _target():

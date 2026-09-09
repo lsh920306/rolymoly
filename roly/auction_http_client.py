@@ -17,6 +17,22 @@ export function auctionApiUrl(path,{location=globalThis.location,backendBase=glo
   return new URL(prefix+path,page.origin).href;
 }
 
+export function auctionXsrfToken(cookieString) {
+  if(cookieString===undefined) {
+    try {cookieString=globalThis.document?.cookie;} catch (_) {return null;}
+  }
+  if(typeof cookieString!=='string')return null;
+  const matches=cookieString.split(';').map(part=>part.trimStart())
+    .filter(part=>part.startsWith('_streamlit_xsrf='));
+  if(matches.length!==1)return null;
+  let value=matches[0].slice('_streamlit_xsrf='.length);
+  // Match Streamlit's POST convention: send the cookie's encoded value,
+  // without percent-decoding or inventing a token when none is available.
+  if(value.startsWith('"') && value.endsWith('"'))value=value.slice(1,-1);
+  if(!/^[\x21-\x7e]{1,1024}$/.test(value) || /["\\;,]/.test(value))return null;
+  return value;
+}
+
 export function createHttpDelivery({config,fetcher,readToken,onFrame,onAck,onError}) {
   const attempted=new Set();
   let stopped=false,latestRead=0;
@@ -39,12 +55,13 @@ export function createHttpDelivery({config,fetcher,readToken,onFrame,onAck,onErr
       let url;
       try { url=auctionApiUrl(isBid?config.bid_url:config.live_url); }
       catch (_) {terminalError('경매 연결 주소를 확인하지 못했습니다. 화면을 새로고침해 주세요.',true);return;}
+      const xsrf=auctionXsrfToken();
       try {
         const response=await fetcher(url,{
           method:'POST',credentials:'same-origin',cache:'no-store',redirect:'error',
           ...(typeof globalThis.AbortSignal?.timeout==='function'?{signal:globalThis.AbortSignal.timeout(10000)}:{}),
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,
-                   'X-Rolymoly-Server-Epoch':config.epoch},
+                   'X-Rolymoly-Server-Epoch':config.epoch,...(xsrf?{'X-Xsrftoken':xsrf}:{})},
           body:JSON.stringify({...request,event_id:config.event_id,...(isBid?{confirm_only:confirmOnly}:{})})
         });
         const result=await response.json();

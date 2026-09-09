@@ -11,7 +11,7 @@ HARNESS = r"""
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const source=JSON.parse(readFileSync(0,'utf8'));
-const {auctionApiUrl,createHttpDelivery}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const {auctionApiUrl,auctionXsrfToken,createHttpDelivery}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const calls=[],frames=[],acks=[],errors=[];
 const config={bid_url:'/api/auction/bid',live_url:'/api/auction/live',epoch:'server-one',event_id:3};
 const token='test-token-at-least-twenty-characters';
@@ -105,6 +105,80 @@ for(const item of invalid)for(const cmd of [null,command]) {
   assert.equal(denied[0].reload,true);assert.ok(!denied[0].message.includes(token));
 }
 assert.equal(fetched,0);assert.equal(calls.length,0);
+""")
+
+    def test_xsrf_cookie_preserves_encoding_and_rejects_ambiguous_values(self):
+        self.run_js(r"""
+const raw='2|abcdef|012345|1788950000';
+const encoded='2%7Cabcdef%7C012345%7C1788950000';
+for(const [cookie,value] of [
+  ['_streamlit_xsrf='+raw,raw],
+  ['unrelated=private; _streamlit_xsrf='+encoded+'; another=private',encoded],
+  ['_streamlit_xsrf="'+raw+'"',raw],
+  ['_streamlit_xsrf="'+encoded+'"',encoded],
+  ['_streamlit_xsrf=abcd1234','abcd1234'],
+])assert.equal(auctionXsrfToken(cookie),value);
+for(const cookie of [
+  '',null,42,'unrelated=private','prefix_streamlit_xsrf=value','_streamlit_xsrf_extra=value',
+  '_streamlit_xsrf=','_streamlit_xsrf=with space','_streamlit_xsrf=trailing ',
+  '_streamlit_xsrf=one\r\nInjected: two','_streamlit_xsrf="unclosed','_streamlit_xsrf=unopened"',
+  '_streamlit_xsrf="escaped\\value"','_streamlit_xsrf=nonasciié','_streamlit_xsrf=comma,value',
+  '_streamlit_xsrf='+raw+'; _streamlit_xsrf='+raw,
+  '_streamlit_xsrf='+raw+'; _streamlit_xsrf=different',
+  '_streamlit_xsrf='+'a'.repeat(1025),
+])assert.equal(auctionXsrfToken(cookie),null);
+assert.equal(calls.length,0);
+""")
+
+    def test_live_and_bid_add_only_existing_xsrf_header(self):
+        self.run_js(r"""
+globalThis.location=new URL('https://rolymoly-test.streamlit.app/~/+/auction');
+const cookieToken='2%7Cabcdef%7C012345%7C1788950000';
+let seq=0;
+for(const cookie of ['other=private; _streamlit_xsrf='+cookieToken,'','_streamlit_xsrf=bad value']) {
+  globalThis.document={cookie};
+  for(const cmd of [null,command]) {
+    const sending=delivery.send(request(++seq,cmd));
+    const call=calls.at(-1);
+    const expected=cookie.includes(cookieToken)?cookieToken:undefined;
+    assert.equal(call.options.headers['X-Xsrftoken'],expected);
+    assert.equal(Object.hasOwn(call.options.headers,'X-Xsrftoken'),expected!==undefined);
+    assert.equal(call.options.credentials,'same-origin');assert.equal(call.options.redirect,'error');
+    assert.equal(call.options.headers.Authorization,'Bearer '+token);
+    assert.equal(call.options.headers['X-Rolymoly-Server-Epoch'],'server-one');
+    assert.ok(call.url.startsWith('https://rolymoly-test.streamlit.app/~/+/api/auction/'));
+    assert.ok(!call.url.includes(cookieToken));assert.ok(!call.options.body.includes(cookieToken));
+    assert.ok(!call.options.body.includes('private'));
+    if(cmd)assert.deepEqual(JSON.parse(call.options.body).command,command);
+    respond(call,cmd?reply(call,{ack:{...command,status:'accepted'}}):viewReply(call,{snapshot:seq}));
+    await sending;
+  }
+}
+globalThis.document={get cookie(){throw new Error('cookie access unavailable');}};
+const sending=delivery.send(request(++seq));
+const call=calls.at(-1);assert.equal(Object.hasOwn(call.options.headers,'X-Xsrftoken'),false);
+respond(call,viewReply(call,{snapshot:seq}));await sending;
+assert.equal(errors.length,0);
+""")
+
+    def test_invalid_origin_is_rejected_before_cookie_read(self):
+        self.run_js(r"""
+globalThis.location=new URL('https://example.test/auction');
+let cookieReads=0,fetched=0;
+globalThis.document={get cookie(){cookieReads++;return '_streamlit_xsrf=private-cookie';}};
+for(const foreign of [true,false])for(const cmd of [null,command]) {
+  globalThis.__streamlit={BACKEND_BASE_URL:foreign?'https://foreign.test/base/':undefined};
+  const rejected=[];
+  const guarded=createHttpDelivery({
+    config:{...config,...(foreign?{}:{bid_url:'https://foreign.test/bid',live_url:'//foreign.test/live'})},
+    fetcher:()=>{fetched++;throw new Error('fetch must not run');},readToken:()=>token,
+    onFrame:()=>assert.fail('unexpected frame'),onAck:()=>assert.fail('unexpected ACK'),
+    onError:(message,reload)=>rejected.push({message,reload}),
+  });
+  await guarded.send(request(1,cmd));
+  assert.equal(guarded.stopped(),true);assert.equal(rejected.length,1);
+}
+assert.equal(cookieReads,0);assert.equal(fetched,0);
 """)
 
     def test_bid_ack_does_not_wait_for_blocked_view(self):

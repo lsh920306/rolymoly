@@ -56,7 +56,7 @@ class AuctionHTTPTests(unittest.TestCase):
         fixtures.LiveAuctionTests.setUp(self)
         self.addCleanup(fixtures.LiveAuctionTests.tearDown, self)
         self.runtime = http.AuctionHTTP(self.core.db_path, factory=lambda path: {"core": self.core, "live": self.live})
-        self.app = Starlette(routes=http.routes())
+        self.app = Starlette(routes=http.routes(base_url=""))
         runtime = patch.object(http, "_runtime", self.runtime)
         runtime.start(); self.addCleanup(runtime.stop)
         for target in ("psycopg.connect", "roly.storage_config._runtime_document", "urllib.request.urlopen"):
@@ -94,6 +94,52 @@ class AuctionHTTPTests(unittest.TestCase):
         encoded = json.dumps(value)
         for secret in (self.tokens[0], self.core.db_path, "fingerprint", "token_hash"):
             self.assertNotIn(secret, encoded)
+
+    def test_prefixed_asgi_read_and_bid_share_runtime_without_root_or_double_prefix(self):
+        self.app = Starlette(routes=http.routes(base_url="/~/+/"))
+        lot = self.start()
+        status, value, _ = self.request(self.envelope(), path="/~/+/api/auction/live")
+        self.assertEqual(status, 200)
+        self.assertTrue(value["panel"]["control"]["can_bid"])
+        body = self.envelope(lot)
+        status, value, _ = self.request(body, path="/~/+/api/auction/bid")
+        self.assertEqual((status, value["ack"]["status"], self.count_bids()), (200, "accepted", 1))
+        with patch.object(self.runtime, "factory", side_effect=AssertionError("unregistered route reached DB")):
+            for path in ("/api/auction/live", "/api/auction/bid", "/~/+/~/+/api/auction/bid"):
+                with self.subTest(path=path):
+                    self.assertEqual(self.request(body, path=path)[0], 404)
+
+    def test_prefixed_routes_keep_origin_guard_before_database(self):
+        self.app = Starlette(routes=http.routes(base_url="/review/app/"))
+        with patch.object(self.runtime, "factory", side_effect=AssertionError("foreign origin reached DB")):
+            for name in ("live", "bid"):
+                with self.subTest(endpoint=name):
+                    status, value, _ = self.request(self.envelope(),
+                        headers={**self.headers(), "origin": "https://other.test"},
+                        path="/review/app/api/auction/" + name)
+                    self.assertEqual((status, value["error"]["code"]), (403, "origin_rejected"))
+
+    def test_real_streamlit_app_keeps_prefixed_api_ahead_of_spa_static_mount(self):
+        import streamlit as st
+        from streamlit.web.server.starlette import starlette_app
+        from streamlit.web.server.starlette.starlette_static_routes import create_streamlit_static_assets_routes
+
+        lot = self.start()
+        # Exercise the installed App route composition and real SPA mount while
+        # avoiding its unrelated runtime startup, cookies, and private settings.
+        with patch.object(st, "get_option", return_value="~/+") as option, \
+                patch.object(starlette_app.config, "_main_script_path", str(Path(__file__).resolve().parents[1] / "app.py")):
+            app = st.App(str(Path(__file__).resolve().parents[1] / "app.py"), routes=http.routes())
+        option.assert_called_once_with("server.baseUrlPath")
+        app._runtime = Mock()
+        with patch.object(starlette_app, "create_streamlit_routes", return_value=create_streamlit_static_assets_routes("~/+")), \
+                patch.object(starlette_app, "create_streamlit_middleware", return_value=[]):
+            self.app = app._build_starlette_app()
+        status, value, _ = self.request(self.envelope(), path="/~/+/api/auction/live")
+        self.assertEqual(status, 200)
+        self.assertIn("panel", value)
+        status, value, _ = self.request(self.envelope(lot), path="/~/+/api/auction/bid")
+        self.assertEqual((status, value["ack"]["status"], self.count_bids()), (200, "accepted", 1))
 
     def test_same_uuid_concurrency_reuses_terminal_and_does_not_extend_twice(self):
         lot = self.start(bid_seconds=10)
@@ -295,6 +341,21 @@ class AuctionHTTPTests(unittest.TestCase):
 
 
 class AuctionHTTPConfigurationTests(unittest.TestCase):
+    def test_route_base_reads_public_config_at_registration_and_normalizes_slashes(self):
+        with patch("streamlit.get_option", side_effect=["", "/", "review/app/"]) as option:
+            self.assertEqual([route.path for route in http.routes()], ["/api/auction/live", "/api/auction/bid"])
+            self.assertEqual([route.path for route in http.routes()], ["/api/auction/live", "/api/auction/bid"])
+            self.assertEqual([route.path for route in http.routes()], ["/review/app/api/auction/live", "/review/app/api/auction/bid"])
+        self.assertEqual(option.call_count, 3)
+        with patch("streamlit.get_option", side_effect=AssertionError("explicit base read configuration")):
+            self.assertEqual([route.path for route in http.routes(base_url="/~/+/")],
+                             ["/~/+/api/auction/live", "/~/+/api/auction/bid"])
+
+    def test_route_base_rejects_dynamic_or_non_path_configuration(self):
+        for value in (42, "https://foreign.test", "review//app", "review/../app", "{path:path}", "app?query", "app#fragment", "app\\path", "app\n"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                http.routes(base_url=value)
+
     def test_pg_cached_ack_auth_uses_the_canonical_session_query_in_one_snapshot(self):
         from roly.core import SESSION_SELECT
         db = Mock()
