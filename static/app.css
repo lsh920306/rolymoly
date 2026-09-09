@@ -31,6 +31,44 @@
   background-color: #ffffff;
 }
 
+/* Four teams fit a focused two-by-two overview, with readable player rows. */
+[data-testid="stDialog"]:has(.st-key-live_overview_panel) {
+  padding: 16px 0;
+}
+[data-testid="stDialog"]:has(.st-key-live_overview_panel) > div {
+  width: min(720px, calc(100vw - 32px));
+  max-width: 720px;
+  margin: 0;
+  box-sizing: border-box;
+  border-radius: 26px;
+}
+[data-testid="stDialog"] [role="dialog"]:has(.st-key-live_overview_panel) {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-radius: 26px;
+}
+[data-testid="stDialog"] [role="dialog"]:has(:is(.st-key-live_overview_panel, .st-key-live_overview_panel_many)) h2,
+[data-testid="stDialog"] [role="dialog"]:has(:is(.st-key-live_overview_panel, .st-key-live_overview_panel_many)) h2 p {
+  width: 100%;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+[data-testid="stDialog"] [role="dialog"]:has(:is(.st-key-live_overview_panel, .st-key-live_overview_panel_many)) h2 {
+  justify-content: center;
+}
+[data-testid="stDialog"] [role="dialog"]:has(:is(.st-key-live_overview_panel, .st-key-live_overview_panel_many)) h2 > span {
+  margin-right: 0;
+}
+:is(.st-key-live_overview_panel, .st-key-live_overview_panel_many) [data-testid="stCaptionContainer"] {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #647084;
+}
+
 :is(
   .st-key-lounge_profile,
   .st-key-lounge_auctions,

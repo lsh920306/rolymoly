@@ -6,19 +6,26 @@
 
 ## 현재 배포 상태
 
-2026-09-09에 확인한 상태입니다. **검수 브랜치 업로드와 Cloud 연결 확인은 완료했으며, 새 앱을 Cloud가 사용하는 `main`에 반영하는 작업은 대기 중입니다.**
+2026-09-09에 확인한 상태입니다. **사용자가 `main` 배포를 명시적으로 승인하여 `a3a091d`를 반영했고, Community Cloud에서 새 앱의 빌드·로그인·페이지 확인을 완료했습니다.** 이후 Cloud 경매에서 화면 반영 지연을 발견해 연결풀과 중복 조회를 수정했습니다. 추가 수정본의 전체 자동 테스트 599개와 최종 CSS 영향 17개는 통과했으며, 새 커밋의 재배포와 Cloud 실입찰 재검증이 남아 있습니다.
 
 | 항목 | 현재 확인된 상태 |
 | --- | --- |
 | GitHub 저장소 | `lsh920306/rolymoly` |
-| 검수 브랜치 | `rolymoly-test`. 이번 페이지 수정 전 업로드 기준 커밋은 `2ff514e30cda438cb5ea0bc6fae7454fa0b23105`이며, 최신 수정본은 이 브랜치에 추가 반영 |
-| Cloud가 사용하는 브랜치 | `main`, 커밋 `ba91d073a6947b8885e9f085508d21afe38a7a46`의 기존 템플릿 |
-| 실제 Cloud 앱 | `rolymoly-test.streamlit.app` → 위 저장소의 `main` / `streamlit_app.py` / Python **3.14** |
-| Cloud Secrets | 사용자가 저장 완료. `[app] environment = "test"`, `[riot] allow_demo = false`; 비밀값은 문서에 포함하지 않음 |
-| 배포에 남은 작업 | `main` 반영은 자동 승인 심사에서 거절되어 사용자의 명시적 승인 대기. 반영 시 Python **3.11**과 이번 `requirements.txt`를 사용하고 새 앱의 실제 실행을 확인해야 함 |
-| 이번 전체 페이지 검수 수정 | 중복 선수 교환 방지, 프로필 이력 복원, 회원 편집·초기화 알림·변경 기록·검색·가독성 수정 완료. 전체 585개와 최종 수정 영향 54개 통과. [페이지별 검수 보고](BROWSER_PAGE_REVIEW.md) |
+| 검수·배포 브랜치 | `rolymoly-test`와 `main`에 `a3a091d` 반영 완료. 이후 지연 개선 수정본은 새 커밋·재배포 예정 |
+| 실제 Cloud 앱 | `rolymoly-test.streamlit.app` → 위 저장소의 `main` / `streamlit_app.py` |
+| 확인한 Cloud 빌드 | Python **3.11.16**, Streamlit **1.63**로 실제 실행 확인 |
+| Cloud Secrets | Supabase 연결 및 `[app] environment = "test"`, `[riot] allow_demo = false` 설정 완료. 비밀값은 문서에 포함하지 않음 |
+| Cloud 확인 완료 | 비로그인·개인회원·관리자의 전체 페이지와 로그인/권한 동선 확인 |
+| 보존한 공유 자료 | 회원 22명·계정 23개·저장된 Riot 프로필 20개와 기존 준비 경매 1번 보존 |
+| Cloud 경매 추가 검수 | 별도 임시 이벤트 2번으로 진행 중. 화면 반영 지연을 발견했으며 최종 실입찰·재개·초기화 확인은 재배포 후 계속 진행 |
+| 최신 수정 소스 | PostgreSQL 연결풀·중복 조회 제거, 전체 팀 팝업 720px 기준 2×2 배치·큰 글씨·보라색 팀 헤더·녹색 포인트·회색 빈자리·청색 배정 표시 반영 |
+| 추가 수정본 검증 | 전체 자동 테스트 599개 통과, 최종 CSS 영향 17개 통과. 연결풀의 실제 PostgreSQL 13조건과 핵심 서비스 17단계 통과, 임시 QA 스키마 삭제 확인 |
 
-업로드 기준 소스는 팀장 선택·참가 팀 카드 변경을 포함한 **고유 테스트 575개 전체 통과·누락 0개·소스 135개 해시 일치**를 확인했습니다. 최초 병렬 실행은 보조 모듈 import 경로 오류 3개로 종료 코드 1이었으며, 제품 소스 변경 없이 `PYTHONPATH=tests`로 누락된 9개를 재검증해 통과한 뒤 전체 테스트 ID를 대조했습니다. **이 결과는 이후 전체 페이지 검수에서 추가한 수정까지 포함한 전체 회귀 결과가 아닙니다.** 카드 변경 전 565개와 아래 초기 PostgreSQL 리허설은 각각 당시 소스 기준의 과거 근거입니다. [575개 검증 결과](test-artifacts/deployment-final-verification.json), [배포 준비 검증](DEPLOYMENT_VERIFICATION_REPORT.md), [이전 Riot 연동 보고](RIOT_API_REPORT.md)
+추가 수정본의 **전체 599개 테스트가 462.953초에 통과**했고 테스트 ID 누락·추가·중복은 없습니다. 검사 대상 소스 138파일 중 실행 도중 `static/app.css`만 바뀌었으므로 전체 실행의 `source_unchanged=false` 근거를 보존했습니다. 그 후 최종 CSS의 **컴포넌트 17개를 1.172초에 재검증해 통과**했고 이 재검증 중 소스 변경은 없습니다. 전체 테스트와 최종 CSS 영향 검증을 합쳐 확인하되, 599개 전체를 마지막 CSS 변경 후 다시 실행한 것으로 표기하지 않습니다. [전체 결과](test-artifacts/deployment-cloud-final-verification.json), [최종 CSS 결과](test-artifacts/deployment-cloud-final-css-recheck-report.json)
+
+Cloud 배포 전의 전체 585개·마지막 수정 영향 54개와 더 이전의 575개·565개 검증은 해당 시점 소스의 완료 이력으로 유지합니다. [페이지 검수 결과](BROWSER_PAGE_REVIEW.md), [배포 준비 검증 이력](DEPLOYMENT_VERIFICATION_REPORT.md)
+
+연결풀은 새 임시 PostgreSQL 스키마에서 동시 연결 제한·재사용·스키마/읽기 전용 설정 격리·끊어진 연결 복구를 **13조건**으로 확인했습니다. 별도의 새 QA 스키마에서는 인증·동시 입찰·마감·포인트·일반내전·경매 보상을 **17단계, 48.703초**에 검증했고 실행 전후 소스 138파일 해시와 공용 회원·이벤트 1번의 해시가 일치했습니다. 두 검증의 임시 스키마는 정리했으며 실제 Riot API를 호출하지 않았습니다. [연결풀 결과](test-artifacts/deployment-postgres-pool.json), [핵심 서비스 결과](test-artifacts/cloud-pool-domain-postgres.json)
 
 ## 체험 검증에서 운영 배포로 전환
 
@@ -38,10 +45,10 @@
 
 ## 검수 앱의 Cloud 설정
 
-현재 연결값과 저장 완료 여부는 위 [현재 배포 상태](#현재-배포-상태)를 기준으로 합니다. 아래는 새 앱 반영 시 적용·확인할 절차입니다.
+현재 연결값과 저장 완료 여부는 위 [현재 배포 상태](#현재-배포-상태)를 기준으로 합니다. 아래 설정은 적용했으며, 이후 재배포에서도 유지합니다.
 
-1. 현재 소스의 **`streamlit_app.py`는 `app.py`와 같은 `roly.ui.run()`을 실행하는 호환 진입점**이므로 기존 Cloud 시작 파일 이름을 유지합니다. 연결된 `main`에 반영되기 전까지 검수 브랜치 업로드만으로 새 앱이 실행되지는 않습니다.
-2. 현재 Cloud의 Python **3.14**를 **3.11**로 맞추고 이 프로젝트의 `requirements.txt`를 사용합니다. 과거 템플릿의 `uv.lock`·`pyproject.toml`이 배포 의존성을 대신 선택하지 않도록 아래 [소스 반영 안내](#소스를-올릴-때-맞출-사항)를 확인합니다.
+1. 현재 소스의 **`streamlit_app.py`는 `app.py`와 같은 `roly.ui.run()`을 실행하는 호환 진입점**입니다. 승인된 `main`의 `a3a091d`를 이 진입점으로 배포했습니다. 이후 수정도 Cloud가 연결한 `main`의 커밋과 실제 빌드를 함께 확인합니다.
+2. Cloud에서 Python **3.11.16**과 Streamlit **1.63** 실행을 확인했습니다. Python 3.11 계열과 이 프로젝트의 `requirements.txt`를 유지하고, 과거 템플릿의 의존성 파일을 되살리지 않습니다.
 3. **Advanced settings → Secrets** 또는 앱 **Settings → Secrets**에 저장한 검수용 Supabase 연결 항목과 아래 설정을 유지합니다. 다른 배포를 새로 만들 때는 해당 환경에 별도로 입력합니다. 실제 비밀번호와 API 키는 문서·소스·ZIP에 넣지 않습니다.
 
 ```toml
@@ -53,7 +60,7 @@ allow_demo = false
 ```
 
 4. Cloud에서는 `ROLYMOLY_APP_ENVIRONMENT=local`이나 로컬 SQLite 대상·개발용 `ROLYMOLY_DATA_DIR`을 지정하지 않습니다. 공용 DB 설정을 누락하거나 잘못 입력하면 앱이 중단되는 것이 정상입니다.
-5. 준비한 공용 검수 DB의 관리자·개인 계정으로 새 앱에 로그인해 ‘검수용’ 배지와 체험 메뉴 부재를 확인합니다. 다른 브라우저로 실제 개인 가입→승인→로그인→카카오톡 명단 확정→팀장 입찰을 검수합니다. 로컬 체험 계정을 배포용으로 사용하지 않습니다.
+5. 준비한 공용 검수 DB의 관리자·개인 계정 로그인과 비로그인 페이지/권한 동선을 Cloud에서 확인했습니다. 재배포 후에는 임시 경매로 팀장 입찰·관전자 반영·재개·초기화를 다시 확인하고, 별도 가입→승인→복구와 여러 기기 연결 검수를 이어갑니다. 로컬 체험 계정을 배포용으로 사용하지 않습니다.
 6. 검수가 끝나면 사용할 DB 프로젝트를 다시 확인하고 `[app] environment = "production"`으로 전환합니다. 모드만 바꿔도 DB가 복사·초기화되지는 않습니다.
 
 앱 스키마의 수동 백업·별도 복원 검증 도구와 워커 프로세스 복구 리허설은 추가했지만, 예약 백업·운영 DB 복원과 Cloud 휴면 중 독립 마감은 완료하지 않았습니다. 계정 비밀번호 복구는 운영진이 본인 확인 후 일회용 코드를 발급하는 방식입니다. 월 운영 예산은 0원입니다.
@@ -172,12 +179,12 @@ $env:ROLYMOLY_DATABASE_TARGET = "supabase://rolymoly"
 
 | 항목 | 현재 확인된 상태 | 남은 작업 | 배포 전 통과 기준 |
 | --- | --- | --- | --- |
-| 최초 관리자 | PostgreSQL 공개 생성 차단과 비공개 CLI 구현·테스트 완료, 공용 검수 DB 관리자 준비됨 | 새 앱 반영 후 준비한 계정으로 Cloud 로그인 확인 | 해당 계정으로 검수 앱 로그인 가능 |
+| 최초 관리자 | PostgreSQL 공개 생성 차단과 비공개 CLI 구현·테스트 완료, 준비된 관리자의 Cloud 로그인 확인 | 재배포 후 관리자 권한 유지 재확인 | 해당 계정으로 검수 앱 로그인 가능 |
 | 영속 저장·백업 | 앱 스키마 백업·새 QA 복원 도구 및 실제 PG 대조 완료 | 예약 실행·외부 보관·실패 알림·운영 복원 절차 | 원본과 복원본의 계정·점수·입찰·대진 일치 및 운영 복구 절차 확인 |
 | 독립 경매 마감 | 프로세스 종료·재시작·두 워커 정산 검증 완료, 휴면 중 독립 워커 없음 | DB 마감 함수와 Cron 또는 별도 상시 처리 서비스 구현, 같은 잠금·시계·중복 방어 적용 | 화면 접속과 앱 가동 여부에 관계없이 마감 배정·차감 1회 처리 |
-| 운영·체험 분리 | test/production의 체험 진입·seed 차단, 동일 DB 로그인 유지·이전 demo 상태 정리 검증 완료 | Cloud의 실제 모드·DB 연결·배지와 체험 부재 확인 | 검수 앱에 모든 사용자가 개인계정으로 가입·로그인하며 체험 자료가 생성되지 않음 |
+| 운영·체험 분리 | test/production의 체험 진입·seed 차단, Cloud의 test 설정·공유 DB 연결 확인 | 재배포에서도 모드·DB·체험 차단 유지 | 검수 앱에 모든 사용자가 개인계정으로 가입·로그인하며 체험 자료가 생성되지 않음 |
 | 로그인·계정 복구 | 개인 가입, 승인·재신청, 본인 변경·일회용 복구 구현. 비밀번호 계산을 쓰기 잠금 밖으로 분리 | Cloud 실제 브라우저에서 가입·재로그인·복구·탭 재접속 확인 | 계정과 기록이 유지되고 폐기된 세션은 재사용 불가 |
-| Cloud 배포·업데이트 | 검수 브랜치 업로드·기존 앱 연결 확인·Secrets 저장 완료. 상세 값은 [현재 배포 상태](#현재-배포-상태) 참고 | 승인 후 `main` 반영, Python 3.11 적용, 여러 기기 검수와 재시작·롤백 절차 확인 | Cloud에서 전체 흐름·재연결·운영 자료 보존 확인 |
+| Cloud 배포·업데이트 | 승인된 `main`의 `a3a091d` 배포, Python 3.11.16 빌드와 비로그인·회원·관리자 페이지 확인 완료. 지연 개선본 전체 599개 및 최종 CSS 영향 17개 통과 | 새 커밋 재배포, Cloud 실입찰·여러 기기·재시작·롤백 확인 | Cloud에서 전체 흐름·재연결·운영 자료 보존 확인 |
 
 공개 접근의 추가 제한 수준은 인터넷 전체 공개인지, 인증된 클랜원만 접속하는 배포인지에 맞춥니다. 경매 중에는 배포를 피하고, 필요한 경우 일시정지·상태 확인·배포·재개 순서를 따릅니다.
 
@@ -248,9 +255,9 @@ Supabase 운영 DB를 연결했어도 Community Cloud의 앱 휴면 중에는 �
 
 ## 소스를 올릴 때 맞출 사항
 
-현재 소스는 `app.py`와 호환 파일 `streamlit_app.py` 모두에서 같은 앱을 실행합니다. **확인한 Cloud 시작 파일 이름 `streamlit_app.py`를 유지하고 해당 파일을 이번 소스로 교체합니다.** 연결된 `main` 반영은 승인 대기 중입니다. 배포 Python은 **3.11**, 의존성은 이번 `requirements.txt`에 맞춥니다. [공식 배포 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy)
+현재 소스는 `app.py`와 호환 파일 `streamlit_app.py` 모두에서 같은 앱을 실행합니다. **Cloud 시작 파일 `streamlit_app.py`를 유지하여 `main`의 `a3a091d` 배포를 완료했습니다.** 이후 지연 개선본도 같은 진입점으로 재배포하며 Python **3.11**과 이번 `requirements.txt`를 유지합니다. [공식 배포 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy)
 
-기존 템플릿 파일을 그대로 남기고 새 파일만 추가하면 환경이 섞입니다. 템플릿의 `uv.lock`·`pyproject.toml`·Python 3.14 설정이 새 `requirements.txt`와 Python 3.11을 대신 선택하지 않도록 `main` 반영 시 정리합니다. `streamlit_app.py`는 제거 대상이 아니라 새 호환 진입점으로 교체할 파일입니다. 검수 브랜치에 올린 배포 소스와 이후 전체 페이지 검수 수정도 함께 대조합니다. [의존성 파일 우선순위](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies)
+기존 템플릿의 `uv.lock`·`pyproject.toml`·Python 3.14 설정이 새 `requirements.txt`와 Python 3.11을 대신 선택하지 않도록 관리합니다. 현재 Cloud에서는 Python 3.11.16으로 빌드했으며, `streamlit_app.py`는 새 호환 진입점입니다. 다음 배포에서도 검수 브랜치·`main`·실제 Cloud 커밋과 의존성을 대조합니다. [의존성 파일 우선순위](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies)
 
 배포 소스에는 `app.py`, `streamlit_app.py`, `requirements.txt`, `roly/`, `app_pages/`, `scripts/`, `static/`, `.streamlit/config.toml`과 필요한 문서를 포함합니다. `.venv/`, `.data/`(원본 백업 포함), SQLite 파일, `.streamlit/secrets.toml`, `.env`, 검수 계정·측정 원자료가 들어 있는 `test-artifacts/`, 원본 비교 자료를 보관한 `.archive/`는 공개 업로드 대상에서 제외합니다. 비밀값은 소스 대신 배포 환경의 비밀 설정으로 관리합니다. [공식 비밀 관리 안내](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)
 
@@ -260,19 +267,19 @@ Supabase 운영 DB를 연결했어도 Community Cloud의 앱 휴면 중에는 �
 
 ## Community Cloud에서 남아 있는 운영 제약
 
-PostgreSQL 운영 자료는 Community Cloud 로컬 파일과 분리했습니다. 아래 배포 환경의 동작은 아직 검수하지 않았습니다.
+PostgreSQL 운영 자료는 Community Cloud 로컬 파일과 분리했고, 실제 Cloud 빌드·공유 DB 연결·로그인·페이지 권한 확인을 마쳤습니다. 아래는 확인된 범위와 남은 운영 제약입니다.
 
 | 항목 | 현재 상태와 필요한 조치 |
 | --- | --- |
-| 운영 저장소 | Cloud Secrets의 `[app] environment=test` 또는 `production`과 Supabase 연결을 확인합니다. 두 모드의 앱은 설정 누락·SQLite 대상을 거절합니다. 로컬 개발 환경변수는 배포에서 사용하지 않으며 예약 백업·보관·운영 복원은 별도로 구성합니다. |
+| 운영 저장소 | Cloud Secrets의 `[app] environment=test`와 Supabase 연결을 확인했습니다. 회원 22명·계정 23개·Riot 캐시 20개를 유지합니다. 두 배포 모드는 설정 누락·SQLite 대상을 거절하며 예약 백업·보관·운영 복원은 별도로 구성합니다. |
 | 경매 마감 작업 | 로컬 권장 실행기인 `python -m roly.server`는 앱과 별도로 마감 worker를 먼저 시작합니다. Community Cloud는 지정한 `streamlit_app.py` 또는 `app.py`를 실행하므로 이 실행기를 자동 사용하지 않습니다. 앱 서비스 초기화 시 활성 경매가 있으면 worker를 시작합니다. 실제 재시작 복구는 검증했지만 해당 서비스 초기화 전이나 플랫폼 휴면 중 마감은 보장되지 않습니다. |
-| 최초 관리자 설정 | PostgreSQL 공개 생성 폼은 차단했습니다. 준비한 검수 DB 관리자로 새 앱의 Cloud 로그인을 확인해야 합니다. 새 DB만 비공개 CLI로 최초 관리자를 준비하며, 이후에는 승인된 개인계정에 운영 역할을 부여합니다. 개발용 SQLite의 초기 설정 폼은 유지됩니다. |
+| 최초 관리자 설정 | PostgreSQL 공개 생성 폼은 차단했고 준비한 검수 DB 관리자의 Cloud 로그인을 확인했습니다. 새 DB만 비공개 CLI로 최초 관리자를 준비하며, 이후에는 승인된 개인계정에 운영 역할을 부여합니다. 개발용 SQLite의 초기 설정 폼은 유지됩니다. |
 | 수신 주소 | 로컬 `.streamlit/config.toml`의 `server.address="127.0.0.1"`은 로컬 접속용입니다. 배포 사본에서는 해당 줄을 제거하거나 배포 환경에서 `0.0.0.0`으로 덮어써야 합니다. 소스 ZIP을 만들 때 Cloud용 설정 사본과 로컬 원본을 구분합니다. |
-| 동시 접속 검증 범위 | 과거 SQLite·Chrome 리허설과 실제 PostgreSQL 경쟁 입찰·워커 복구를 확인했습니다. 각 결과는 해당 보고서의 실행 소스 기준입니다. Cloud와 여러 실제 기기의 인터넷 지연·부하는 아직 측정하지 않았습니다. |
+| 동시 접속 검증 범위 | 실제 PostgreSQL 경쟁 입찰·워커 복구·연결풀 격리를 확인했습니다. Cloud 임시 경매에서 UI 반영 지연을 발견해 수정 중이며, 개선본 재배포 후 실입찰·재개·초기화·관전자 동기화를 확인해야 합니다. 여러 실제 기기의 인터넷 지연·부하 보장값은 아직 없습니다. |
 
 SQLite 파일 보존 제약은 [Streamlit의 데이터 연결 문서](https://docs.streamlit.io/develop/concepts/connections/connecting-to-data)에 명시되어 있습니다. Community Cloud는 저장소 루트에서 `streamlit run`을 실행하고, 트래픽이 없는 앱은 휴면할 수 있습니다. [파일 실행 구조](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/file-organization), [휴면 및 앱 관리](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app)
 
-기존 Cloud 검수 앱에 새 소스를 반영한 뒤 연결·로그인·권한·경매·결과를 확인하고 공개 범위를 정합니다. 검수 브랜치 업로드는 완료했지만, 그 사실만으로 Cloud가 새 앱을 실행하는 것은 아닙니다.
+Cloud 검수 앱에는 `a3a091d`를 반영했고 연결·로그인·페이지 권한을 확인했습니다. 지연 개선본의 자동 검증은 완료했으며, 새 커밋 재배포 이후 남은 경매 검수를 마쳐 공개 범위를 정합니다. 추가 로컬 입찰 시도는 클릭 도구 왕복 중 대상 선수가 바뀌어 입찰 기록을 아직 확인하지 못했으므로 성공으로 집계하지 않습니다. 임시 이벤트 2번은 검수 동안 보존하며, 별도 정리 지시 전에는 삭제하지 않습니다.
 
 ## 예산 확정 전 검토했던 SQLite 유지 대안
 

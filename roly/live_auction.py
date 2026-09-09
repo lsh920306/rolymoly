@@ -196,7 +196,7 @@ class LiveAuction:
         self._log(db, event_id, "LOT_OPEN", {"member_id": lot["member_id"], "attempt": lot["attempt"]}, stamp, lot_id=lot["id"])
         return True
 
-    def start(self, token, event_id):
+    def start(self, token, event_id, *, return_state=True):
         with self.core.transaction() as db:
             actor = self.competition._authorize(db, token, event_id)
             session = self._session(db, event_id)
@@ -210,7 +210,7 @@ class LiveAuction:
             if not self._open_next(db, session, stamp):
                 raise ValueError("경매에 등록된 선수가 없습니다.")
             self._log(db, event_id, "START", {}, stamp, actor)
-        return self.get_state(event_id)
+        return self.get_state(event_id) if return_state else None
 
     def _bidder(self, db, token, event_id):
         actor = self.core.session(token, db)
@@ -377,7 +377,7 @@ class LiveAuction:
                     changed.append(session["event_id"])
         return changed
 
-    def pause(self, token, event_id):
+    def pause(self, token, event_id, *, return_state=True):
         with self.core.transaction() as db:
             actor = self.competition._authorize(db, token, event_id)
             session = self._session(db, event_id)
@@ -392,9 +392,9 @@ class LiveAuction:
                 remaining = min(limit, max(0.0, deadline - stamp)) if deadline is not None else None
                 db.execute("UPDATE live_sessions SET status='PAUSED',paused_phase=?,pause_remaining=?,updated_at=? WHERE event_id=?", (session["status"], remaining, _iso(stamp), event_id))
                 self._log(db, event_id, "PAUSE", {"phase": session["status"], "remaining_seconds": remaining}, stamp, actor)
-        return self.get_state(event_id)
+        return self.get_state(event_id) if return_state else None
 
-    def resume(self, token, event_id):
+    def resume(self, token, event_id, *, return_state=True):
         with self.core.transaction() as db:
             actor = self.competition._authorize(db, token, event_id)
             session = self._session(db, event_id)
@@ -407,7 +407,7 @@ class LiveAuction:
                 db.execute("UPDATE live_lots SET closes_at=? WHERE id=? AND status='OPEN'", (deadline, session["current_lot_id"]))
             db.execute("UPDATE live_sessions SET status=?,next_at=?,paused_phase=NULL,pause_remaining=NULL,updated_at=? WHERE event_id=?", (session["paused_phase"], deadline if session["paused_phase"] == "WAITING" else None, _iso(stamp), event_id))
             self._log(db, event_id, "RESUME", {"phase": session["paused_phase"], "deadline": deadline}, stamp, actor)
-        return self.get_state(event_id)
+        return self.get_state(event_id) if return_state else None
 
     def retry_unsold(self, token, event_id, member_ids=None):
         with self.core.transaction() as db:

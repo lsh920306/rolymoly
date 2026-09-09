@@ -192,7 +192,7 @@ let cleanup;
 for(const overview of fixture.overviews){
   cleanup=render({parentElement:parent,data:overview});
   assert.equal(root.querySelector('.overview-grid').style['--cols'],Math.max(2,overview.teams.length/2));
-  assert.equal(all(root).filter(n=>n.className==='mini-position').length,overview.teams.length*5);
+  assert.equal(all(root).filter(n=>n.className.split(' ').includes('mini-position')).length,overview.teams.length*5);
   const people=all(root).filter(n=>n.className.split(' ').includes('mini-member'));
   assert.equal(people.length,overview.teams.reduce((count,team)=>count+team.count,0),'Duplicate positions must not hide members');
   assert.equal(all(root).filter(n=>n.className.split(' ').includes('captain-row')).length,overview.teams.length);

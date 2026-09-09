@@ -9,12 +9,20 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from datetime import datetime, timezone
+import atexit
 import hashlib
+import os
 import re
 import sqlite3
+import threading
+from time import monotonic
 
 
 SCHEMA_VERSION = 6
+POOL_MAX_SIZE = 6
+POOL_TIMEOUT = 5.0
+_pool_lock = threading.Lock()
+_active_pool = None
 _SCHEMA = re.compile(r"rolymoly(?:_qa_[a-f0-9]{8,40})?\Z")
 _QA_SCHEMA = re.compile(r"rolymoly_qa_[a-f0-9]{8,40}\Z")
 _ID_TABLES = frozenset({
@@ -264,7 +272,7 @@ class Cursor:
 
 
 class PostgresConnection:
-    """A short-lived connection; each explicit transaction has a local schema.
+    """One exclusive connection lease; each transaction has a local schema.
 
     SET LOCAL is performed inside each transaction, including one-statement
     operations. No session-level search_path or advisory locks are required,
@@ -272,13 +280,19 @@ class PostgresConnection:
     """
     is_postgres = True
 
-    def __init__(self, schema, raw):
+    def __init__(self, schema, raw, *, pool=None):
         self.schema = validate_schema(schema)
         self._raw = raw
+        self._pool = pool
+        self._closed = False
+
+    def _require_open(self):
+        if self._closed:
+            raise sqlite3.ProgrammingError("이미 반환한 저장소 연결입니다.")
 
     @property
     def in_transaction(self):
-        if self._raw.closed:
+        if self._closed or self._raw.closed:
             return False
         return self._raw.info.transaction_status != _driver().pq.TransactionStatus.IDLE
 
@@ -310,6 +324,7 @@ class PostgresConnection:
         ownership, including when a driver error is reported at synchronization.
         Without libpq pipeline support the same queries execute sequentially.
         """
+        self._require_open()
         if not self.in_transaction:
             raise sqlite3.ProgrammingError("조회 묶음에는 진행 중인 트랜잭션이 필요합니다.")
         prepared = [_batch_select(query, parameters) for query, parameters in statements]
@@ -324,6 +339,7 @@ class PostgresConnection:
             raise _database_error(error) from None
 
     def execute(self, query, parameters=None):
+        self._require_open()
         if not isinstance(query, str):
             raise TypeError("SQL은 문자열로 전달해 주세요.")
         control = query.strip().rstrip(";").strip().upper()
@@ -357,6 +373,7 @@ class PostgresConnection:
             raise
 
     def executemany(self, query, parameters):
+        self._require_open()
         psycopg = _driver()
         owned = not self.in_transaction
         try:
@@ -378,6 +395,7 @@ class PostgresConnection:
 
     def executescript(self, script):
         """Execute PostgreSQL DDL/script statements in one existing/new write txn."""
+        self._require_open()
         owned = not self.in_transaction
         try:
             if owned:
@@ -400,19 +418,36 @@ class PostgresConnection:
         return {row[0] for row in self.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=? AND table_name=? ORDER BY ordinal_position", (self.schema, name))}
 
     def commit(self):
+        self._require_open()
         try:
             self._raw.commit()
         except _driver().Error as error:
             raise _database_error(error) from None
 
     def rollback(self):
+        self._require_open()
         try:
             self._raw.rollback()
         except _driver().Error as error:
             raise _database_error(error) from None
 
     def close(self):
-        self._raw.close()
+        if self._closed:
+            return
+        self._closed = True
+        if self._pool is None:
+            self._raw.close()
+            return
+        # Core.read_snapshot deliberately exits without committing. Finish that
+        # transaction before returning the lease; never commit from close(). A
+        # failed rollback discards this connection instead of reusing its state.
+        try:
+            if not self._raw.closed and self._raw.info.transaction_status != _driver().pq.TransactionStatus.IDLE:
+                self._raw.rollback()
+        except _driver().Error:
+            self._raw.close()
+        finally:
+            self._pool.putconn(self._raw)
 
     def __enter__(self):
         return self
@@ -424,6 +459,96 @@ class PostgresConnection:
             self.close()
 
 
+def _pooled_connection_class():
+    """Keep background pool diagnostics free of hosts, users and driver text."""
+    driver = _driver()
+
+    class ApplicationConnection(driver.Connection):
+        @classmethod
+        def connect(cls, *args, **kwargs):
+            try:
+                return super().connect(*args, **kwargs)
+            except driver.Error:
+                raise driver.OperationalError("저장소 연결을 준비하지 못했습니다.") from None
+
+        def __repr__(self):
+            return "<Rolymoly PostgreSQL connection>"
+
+    return ApplicationConnection
+
+
+def _reset_pool_connection(raw):
+    """Reset SQL session state and client defaults before another checkout.
+
+    The pool performs this in its worker before making the connection available.
+    DISCARD ALL also clears temporary objects and session advisory locks; SET
+    LOCAL still chooses the schema for every individual transaction.
+    """
+    driver = _driver()
+    try:
+        raw.autocommit = True
+        raw.read_only = None
+        raw.isolation_level = None
+        raw.deferrable = None
+        raw.prepare_threshold = None
+        raw.row_factory = _row_factory
+        raw.execute("DISCARD ALL")
+        raw._roly_released_at = monotonic()
+    except driver.Error:
+        raise driver.OperationalError("저장소 연결을 정리하지 못했습니다.") from None
+
+
+def _check_pool_connection(raw):
+    """Check long-idle sockets without an extra network query on every poll."""
+    driver = _driver()
+    try:
+        if raw.closed:
+            raise driver.OperationalError("저장소 연결이 종료되었습니다.")
+        released = getattr(raw, "_roly_released_at", None)
+        if released is not None and monotonic() - released >= 30:
+            raw.execute("SELECT 1")
+    except driver.Error:
+        raise driver.OperationalError("저장소 연결을 다시 준비하고 있습니다.") from None
+
+
+def _connection_pool(kwargs):
+    global _active_pool
+    try:
+        from psycopg_pool import ConnectionPool
+    except ImportError:
+        raise RuntimeError("Supabase 저장소를 사용하려면 psycopg_pool 패키지를 설치해 주세요.") from None
+    # Credentials are only used in this opaque process-local identity, never
+    # in the pool name or logs. QA schemas share the same small connection cap.
+    identity = (os.getpid(), hashlib.sha256(repr(sorted(kwargs.items())).encode()).digest())
+    with _pool_lock:
+        previous = _active_pool
+        if previous and previous[0] == identity and not previous[1].closed:
+            return previous[1]
+        pool = ConnectionPool(connection_class=_pooled_connection_class(), kwargs=kwargs,
+                              name="rolymoly", min_size=1, max_size=POOL_MAX_SIZE,
+                              timeout=POOL_TIMEOUT, max_waiting=64, num_workers=2,
+                              max_idle=60, max_lifetime=600, reconnect_timeout=10,
+                              check=_check_pool_connection, reset=_reset_pool_connection, open=True)
+        _active_pool = (identity, pool)
+    if previous and previous[0][0] == identity[0]:
+        # In-flight leases keep their own pool reference; a retired pool closes
+        # those connections on return rather than lending them to new settings.
+        previous[1].close()
+    return pool
+
+
+def close_pools():
+    """Release this process's idle connections (also used by QA/CLI shutdown)."""
+    global _active_pool
+    with _pool_lock:
+        previous, _active_pool = _active_pool, None
+    if previous and previous[0][0] == os.getpid():
+        previous[1].close()
+
+
+atexit.register(close_pools)
+
+
 def connect(schema="rolymoly"):
     schema = validate_schema(schema)
     from .storage_config import postgres_kwargs
@@ -431,7 +556,8 @@ def connect(schema="rolymoly"):
     kwargs = dict(postgres_kwargs())
     kwargs.update(autocommit=True, row_factory=_row_factory)
     try:
-        return PostgresConnection(schema, psycopg.connect(**kwargs))
+        pool = _connection_pool(kwargs)
+        return PostgresConnection(schema, pool.getconn(), pool=pool)
     except psycopg.Error as error:
         raise _database_error(error) from None
 

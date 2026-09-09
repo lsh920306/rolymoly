@@ -52,16 +52,15 @@ if not events:
 event_id = st.selectbox("경매 선택", event_ids,
     format_func=lambda selected_id: f"{event_map[selected_id]['title']} · #{selected_id}",
     key="auction_event", label_visibility="collapsed" if live_page else "visible")
-event = service.get_event(event_id)
+live_page = event_map[event_id]["status"] in ("AUCTION", "AUCTION_RUNNING")
+# Active auctions load their roster and authority together inside get_view.
+# Preparation and historical auctions retain the full event projection.
+event = event_map[event_id] if live_page else service.get_event(event_id)
 editable = can_edit(actor, event)
 status = event["status"]
 team_count = event["team_count"]
 build_mode = event["build_mode"]
 capacity = team_count * 5
-players = event["players"]
-player_map = {player["member_id"]: player for player in players}
-team_map = {team["id"]: team for team in event["teams"]}
-team_names = {team_id: team["name"] for team_id, team in team_map.items()}
 
 detail_area = st.expander("경매 정보") if live_page else st.container(border=True, key="auction_details")
 with detail_area:
@@ -78,6 +77,21 @@ with detail_area:
             st.session_state.t_create_open = True
             st.session_state.pop("t_preparation_dialog", None)
             st.rerun()
+
+if live_page:
+    if render_live_auction(event_id, page_route=True):
+        st.stop()
+    # Legacy auctions without live settings still expose their saved roster
+    # and the authorized upgrade action. Read failures never use this path.
+    event = service.get_event(event_id)
+    if event["status"] not in ("AUCTION", "AUCTION_RUNNING"):
+        st.rerun()
+    editable = can_edit(actor, event)
+
+players = event["players"]
+player_map = {player["member_id"]: player for player in players}
+team_map = {team["id"]: team for team in event["teams"]}
+team_names = {team_id: team["name"] for team_id, team in team_map.items()}
 
 if editable and status in ("DRAFT", "RECRUITING"):
     with st.expander("경매 정보 수정"):
@@ -145,15 +159,10 @@ elif status == "AUCTION_READY":
             if reopen_submit:
                 perform(lambda: service.reopen_preparation(token, event_id, reopen_reason), "명단을 보존하고 참가자 준비 단계로 돌아갔습니다.")
 elif status in ("AUCTION", "AUCTION_RUNNING"):
-    current_live = live_service(st.session_state.db_path).get_state(event_id)
-    if current_live:
-        render_live_auction(event_id)
-        st.stop()
-    else:
-        st.caption("실시간 경매 설정이 없는 기존 경매입니다. 저장된 명단을 조회할 수 있습니다.")
-        if editable and not event.get("workflow_version"):
-            if st.button("새 경매 준비로 전환", type="primary", key=f"t_upgrade_{event_id}"):
-                perform(lambda: service.upgrade_auction(token, event_id), "저장된 명단과 예산으로 실시간 경매를 준비합니다.")
+    st.caption("실시간 경매 설정이 없는 기존 경매입니다. 저장된 명단을 조회할 수 있습니다.")
+    if editable and not event.get("workflow_version"):
+        if st.button("새 경매 준비로 전환", type="primary", key=f"t_upgrade_{event_id}"):
+            perform(lambda: service.upgrade_auction(token, event_id), "저장된 명단과 예산으로 실시간 경매를 준비합니다.")
 elif status == "BRACKET_SETUP":
     st.subheader("경매 완료")
     st.caption("최종 팀과 낙찰 포인트입니다. 포지션 확인 후 대진을 준비하세요.")

@@ -393,14 +393,14 @@ def render_auction_setup(event, token, actor):
             st.session_state.pop("t_auction_settings_review", None)
             st.session_state.t_preparation_dialog = ("settings", event["id"])
         if st.button("경매 시작", key=f"live_start_{event['id']}", type="primary", disabled=current is None):
-            perform(lambda: live.start(token, event["id"]), "경매를 시작했습니다.")
+            perform(lambda: live.start(token, event["id"], return_state=False), "경매를 시작했습니다.")
         if current:
             auction_reset_control(event["id"])
 
 
 @st.fragment(run_every=0.5)
-def render_live_auction(event_id):
-    """Refresh the active auction twice a second; decisions use the DB clock."""
+def render_live_auction(event_id, *, page_route=False):
+    """Read one fresh view; a missing legacy session can use the parent page."""
     render_auction_sync(key=f"auction_live_sync_{event_id}")
     token = st.session_state.get("token")
     live = live_service(st.session_state.db_path)
@@ -410,11 +410,18 @@ def render_live_auction(event_id):
         view_received_at = monotonic()
     except sqlite3.Error:
         st.error("경매 상태를 불러오지 못했습니다. 연결이 회복되면 다시 확인합니다.")
-        return
+        return True  # Keep polling; a failed read is not an absent live session.
     if not state:
+        if page_route:
+            if st.session_state.pop(f"live_observed_status_{event_id}", None) is not None:
+                st.rerun(scope="app")
+            return False
         st.caption("아직 경매 설정이 저장되지 않았습니다.")
-        return
+        return True
     event = state["event"]
+    if page_route and event["status"] not in ("AUCTION", "AUCTION_RUNNING"):
+        # A reset or completion may race the page's inexpensive event listing.
+        st.rerun(scope="app")
     if st.session_state.get("live_overview_event") not in (None, event_id):
         close_team_overview()
     if st.session_state.get("live_reset_event") not in (None, event_id):
@@ -479,11 +486,11 @@ def render_live_auction(event_id):
                 if status in ("RUNNING", "WAITING"):
                     st.button("일시 정지", type="primary", icon=":material/pause:", key="live_pause", on_click=_live_action,
                         help="주최자·관리자가 입찰 시간과 다음 선수 대기를 멈춥니다.",
-                        args=(event_id, lambda: live.pause(token, event_id), "경매를 일시정지했습니다."))
+                        args=(event_id, lambda: live.pause(token, event_id, return_state=False), "경매를 일시정지했습니다."))
                 elif status == "PAUSED":
                     st.button("경매 재개", type="primary", icon=":material/play_arrow:", key="live_resume", on_click=_live_action,
                         help="주최자·관리자가 일시 정지 전 남은 시간부터 다시 진행합니다.",
-                        args=(event_id, lambda: live.resume(token, event_id), "남은 시간부터 경매를 재개했습니다."))
+                        args=(event_id, lambda: live.resume(token, event_id, return_state=False), "남은 시간부터 경매를 재개했습니다."))
                 st.button("유찰 재시작", icon=":material/replay:", key="live_retry", disabled=not retry_ready, help=retry_help, on_click=_live_action,
                     args=(event_id, lambda: live.retry_unsold(token, event_id), "유찰 선수만 무작위로 다시 진행합니다. 3초 후 시작합니다."))
             if retry_ready:
@@ -614,3 +621,4 @@ def render_live_auction(event_id):
                 st.caption(f"{stamp(item['created_at'])} · {event_labels.get(item['type'], item['type'])} {player}")
     if st.session_state.get("live_reset_event") == event_id:
         auction_reset_dialog(event_id, token)
+    return True

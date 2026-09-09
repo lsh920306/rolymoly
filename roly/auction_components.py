@@ -87,21 +87,25 @@ CSS = """
 .volume { width:78px; min-width:35px; accent-color:#245e9b; }
 .volume-label { font-size:12px; color:#34465d; min-width:32px; }
 .overview-grid { display:grid; gap:10px; grid-template-columns:repeat(var(--cols),minmax(0,1fr)); }
-.mini-team { min-width:0; border:1px solid #dce1e8; border-top:3px solid var(--team-color,#2269c7); border-radius:10px; padding:10px; background:#fff; }
-.mini-team.mine { border-color:var(--team-color,#2269c7); }
-.mini-heading { display:flex; justify-content:space-between; align-items:center; gap:6px; font-size:15px; line-height:20px; color:var(--team-color,#2269c7); }
-.mini-heading-title { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
-.mini-budget { font-size:11px; line-height:18px; color:#536176; margin-bottom:5px; }
-.mini-position { display:grid; grid-template-columns:30px minmax(0,1fr); gap:5px; align-items:center; min-height:32px; border-top:1px solid #edf0f4; }
-.mini-role { color:#536176; font-size:10px; font-weight:700; }
+.mini-team { min-width:0; border:1px solid #e0e4eb; border-radius:13px; padding:10px; background:#fff; box-shadow:0 3px 12px rgb(28 37 59 / 3%); }
+.mini-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; min-height:44px; padding:0 0 8px 11px; position:relative; }
+.mini-heading::before { content:''; position:absolute; left:0; top:1px; bottom:9px; width:5px; border-radius:5px; background:#7852ff; }
+.mini-heading-title { min-width:0; display:flex; align-items:center; flex-wrap:wrap; gap:5px; font-size:16px; font-weight:800; }
+.mini-captain { margin-top:2px; color:#536176; font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mini-budget { flex-shrink:0; padding:4px 8px; border-radius:20px; background:#eafbf1; color:#087e3a; font-size:14px; font-weight:800; white-space:nowrap; }
+.mini-position { display:grid; grid-template-columns:38px minmax(0,1fr); gap:7px; align-items:center; min-height:46px; padding:5px 7px; margin-top:4px; border:1px solid transparent; border-radius:10px; background:#f2f3f5; }
+.mini-position.occupied { background:#eff6ff; border-color:#c2d9ff; }
+.mini-role { color:#536176; font-size:12px; font-weight:750; text-align:center; }
 .mini-people { min-width:0; }
-.mini-member { display:flex; gap:6px; align-items:center; min-width:0; min-height:31px; font-size:12px; line-height:1.2; }
-.mini-member .avatar { flex-basis:26px; height:26px; border-radius:7px; font-size:12px; overflow:hidden; }
+.mini-member { display:flex; gap:7px; align-items:center; min-width:0; min-height:34px; font-size:14px; line-height:1.3; }
+.mini-member .avatar { flex-basis:34px; height:34px; border-radius:50%; font-size:15px; overflow:hidden; }
 .mini-identity { flex:1; min-width:0; }
 .mini-name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.mini-tag { font-size:10px; color:#617085; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.mini-price { font-size:10px; color:#536176; white-space:nowrap; }
-.mini-empty { color:#748094; font-size:10px; }
+.mini-tag { font-size:11px; color:#536176; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mini-price { font-size:11px; color:#536176; white-space:nowrap; }
+.mini-member .captain-badge { padding:3px 5px; border-radius:20px; background:#ef3038; color:#fff; font-size:11px; }
+.mini-empty { color:#6b7688; font-size:12px; font-weight:600; text-align:center; padding-right:45px; }
+@media(max-height:760px) and (min-width:621px) { .mini-position{min-height:40px;padding:3px 5px;} .mini-member{min-height:32px;} .mini-member .avatar{flex-basis:32px;height:32px;} .mini-heading{min-height:40px;} }
 .queue-panel { display:flex; gap:14px; align-items:center; padding:12px 14px; background:#fff; border:1px solid #dce1e8; border-radius:12px; }
 .queue-heading { flex-shrink:0; font-size:13px; font-weight:750; }
 .queue-heading .muted { font-weight:400; font-size:11px; margin-top:4px; }
@@ -230,10 +234,13 @@ export default function({parentElement, data}) {
       const header=make('div','mini-heading');
       const title=make('div','mini-heading-title');title.append(make('strong','',team.name));
       if(team.mine)title.append(make('span','team-badge','내 팀'));
-      header.append(title,make('span','muted',team.count+'/5'));
-      card.append(header,make('div','mini-budget','포인트 '+team.remaining));
+      const teamInfo=make('div','mini-identity');
+      const captain=make('div','mini-captain','팀장 '+(team.captain?.nickname || '미정'));
+      captain.title=team.captain?.name || '팀장 미정';teamInfo.append(title,captain);
+      const budget=make('span','mini-budget',team.remaining);budget.title='포인트 · '+team.count+'/5명';
+      header.append(teamInfo,budget);card.append(header);
       for(const slot of team.slots){
-        const position=make('div','mini-position');position.append(make('span','mini-role',slot.role));
+        const position=make('div','mini-position'+(slot.players.length?' occupied':''));position.append(make('span','mini-role',slot.role));
         const people=make('div','mini-people');
         for(const p of slot.players){
           const line=make('div','mini-member'+(p.captain?' captain-row':''));
@@ -242,7 +249,7 @@ export default function({parentElement, data}) {
           line.append(portrait(p.profile_icon_url,p.name,'avatar'),identity,
             p.captain ? make('span','team-badge captain-badge','팀장') : make('span','mini-price',p.price));people.append(line);
         }
-        if(!slot.players.length)people.append(make('div','mini-empty','배정 대기'));
+        if(!slot.players.length)people.append(make('div','mini-empty','미정'));
         position.append(people);card.append(position);
       }
       grid.append(card);
@@ -561,7 +568,9 @@ def render_sound(state, key):
 def render_overview(teams, key, *, member_id=None):
     teams = teams["teams"] if isinstance(teams, dict) else teams
     cards = [team_data(team, member_id=member_id, index=index) for index, team in enumerate(teams)]
-    _renderer()(data={"kind": "overview", "teams": cards}, key=key, height="content", width="stretch")
+    with st.container(key="live_overview_panel" if len(cards) <= 4 else "live_overview_panel_many"):
+        st.caption("팀별 포인트와 포지션 배정 현황을 한눈에 확인하세요.")
+        _renderer()(data={"kind": "overview", "teams": cards}, key=key, height="content", width="stretch")
 
 
 def _latest_lots(state):

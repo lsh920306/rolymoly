@@ -161,7 +161,8 @@ class PostgresAdapterTests(unittest.TestCase):
         self.assertNotEqual(advisory_key("rolymoly"), advisory_key("rolymoly_qa_0123456789abcdef"))
 
     def test_database_errors_do_not_expose_connection_or_row_values(self):
-        with patch("roly.storage_config.postgres_kwargs", return_value={}), patch("psycopg.connect", side_effect=psycopg.OperationalError("synthetic-private-connection-secret")):
+        with patch("roly.storage_config.postgres_kwargs", return_value={}), patch("roly.postgres._connection_pool") as pool:
+            pool.return_value.getconn.side_effect = psycopg.OperationalError("synthetic-private-connection-secret")
             with self.assertRaises(sqlite3.OperationalError) as connection_error:
                 connect("rolymoly")
         self.assertNotIn("synthetic-private", str(connection_error.exception))
