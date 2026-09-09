@@ -120,6 +120,20 @@ class AuctionHTTPTests(unittest.TestCase):
                         path="/review/app/api/auction/" + name)
                     self.assertEqual((status, value["error"]["code"]), (403, "origin_rejected"))
 
+    def test_gateway_can_strip_auth_headers_without_losing_session_or_echoing_secrets(self):
+        lot = self.start()
+        headers = {k: v for k, v in self.headers().items() if k not in (http.SESSION_HEADER, http.EPOCH_HEADER)}
+        envelope = self.envelope(lot)
+        body = {**envelope, "session_token": self.tokens[0], "server_epoch": self.runtime.epoch}
+        status, value, _ = self.request(body, headers=headers)
+        self.assertEqual((status, value["ack"]["status"], self.count_bids()), (200, "accepted", 1))
+        self.assertEqual(value["request"], {key: value for key, value in envelope.items() if key != "event_id"})
+        self.assertNotIn(self.tokens[0], json.dumps(value))
+        for change, expected in (({"session_token": "short"}, 401), ({"server_epoch": "old"}, 409)):
+            self.assertEqual(self.request({**body, **change}, headers=headers)[0], expected)
+        self.assertEqual(self.request(body, headers={**headers, "origin": "https://other.test"})[0], 403)
+        self.assertEqual(self.count_bids(), 1)
+
     def test_real_streamlit_app_keeps_prefixed_api_ahead_of_spa_static_mount(self):
         import streamlit as st
         from streamlit.web.server.starlette import starlette_app

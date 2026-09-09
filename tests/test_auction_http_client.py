@@ -237,10 +237,13 @@ respond(calls[0],{context:'other',epoch:'server-one',ack:{...command,status:'acc
 assert.equal(delivery.stopped(),true);assert.equal(acks.length,0);
 """)
 
-    def test_bearer_is_confined_to_header(self):
+    def test_session_is_private_transport_not_url_or_saved_command(self):
         self.run_js(r"""
-const first=delivery.send(request(1,command));const call=calls[0];
-assert.equal(call.url,'/api/auction/bid');assert.ok(!call.url.includes(token));assert.ok(!call.options.body.includes(token));
+const original=request(1,command);const first=delivery.send(original);const call=calls[0];
+assert.equal(call.url,'/api/auction/bid');assert.ok(!call.url.includes(token));
+assert.ok(!JSON.stringify(original).includes(token));assert.ok(!JSON.stringify(command).includes(token));
+assert.equal(JSON.parse(call.options.body).session_token,token);
+assert.equal(JSON.parse(call.options.body).server_epoch,'server-one');
 assert.equal(call.options.headers['X-Rolymoly-Session'],token);
 assert.equal(call.options.headers.Authorization,undefined);
 assert.equal(call.options.headers['X-Rolymoly-Server-Epoch'],'server-one');

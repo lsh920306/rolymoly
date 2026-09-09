@@ -226,7 +226,7 @@ def _response(value, status=200):
     return JSONResponse(value, status_code=status, headers={"Cache-Control": "no-store", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff"})
 
 
-def _credentials(request):
+def _check_origin(request):
     origin = urlsplit(request.headers.get("origin", ""))
     host = request.headers.get("host", "").lower()
     local = origin.hostname in ("localhost", "127.0.0.1", "::1")
@@ -235,13 +235,16 @@ def _credentials(request):
         raise TransportError("origin_rejected", "같은 사이트에서 다시 요청해 주세요.", 403)
     if request.headers.get("sec-fetch-site") not in (None, "same-origin"):
         raise TransportError("origin_rejected", "같은 사이트에서 다시 요청해 주세요.", 403)
+
+
+def _credentials(request, body):
     # Hosting gateways may consume Authorization for their own authentication.
     # Use our app-specific header while keeping the same revocable Core session.
     value = request.headers.get(SESSION_HEADER)
     if value is None:
         legacy = request.headers.get("authorization", "")
-        value = legacy[7:] if legacy.startswith("Bearer ") else ""
-    if not 20 <= len(value) <= 256 or any(c.isspace() for c in value):
+        value = legacy[7:] if legacy.startswith("Bearer ") else body.get("session_token", "")
+    if not isinstance(value, str) or not 20 <= len(value) <= 256 or any(c.isspace() for c in value):
         raise TransportError("login_required", "본인 계정으로 로그인해 주세요.", 401, reload=True)
     return value
 
@@ -259,7 +262,7 @@ async def _body(request):
         value = json.loads(content)
     except (ValueError, UnicodeError):
         raise TransportError("invalid_json", "요청 형식을 확인해 주세요.") from None
-    if not isinstance(value, dict) or set(value) - {"event_id", "context", "epoch", "seq", "sent_ms", "command", "confirm_only"}:
+    if not isinstance(value, dict) or set(value) - {"event_id", "context", "epoch", "seq", "sent_ms", "command", "confirm_only", "session_token", "server_epoch"}:
         raise TransportError("invalid_json", "요청 형식을 확인해 주세요.")
     if type(value.get("confirm_only", False)) is not bool:
         raise TransportError("invalid_confirmation", "입찰 확인 형식을 확인해 주세요.")
@@ -269,19 +272,24 @@ async def _body(request):
 async def handle(request, *, bidding):
     started = monotonic()
     try:
-        token = _credentials(request)
+        _check_origin(request)
+        body = await _body(request)
+        token = _credentials(request, body)
+        server_epoch = request.headers.get(EPOCH_HEADER, body.get("server_epoch"))
+        # Keep transport secrets out of command ledgers, echoed envelopes and views.
+        body.pop("session_token", None)
+        body.pop("server_epoch", None)
         with _runtime_lock:
             runtime = _runtime
         if runtime is None:
             raise TransportError("transport_unavailable", "입찰 연결을 준비하고 있습니다. 화면을 다시 열어 주세요.", 503, reload=True)
-        runtime.check_epoch(request.headers.get(EPOCH_HEADER))
-        body = await _body(request)
+        runtime.check_epoch(server_epoch)
         event_id = body.get("event_id")
         if not bidding and body.get("confirm_only"):
             raise TransportError("view_cannot_confirm", "입찰 확인은 입찰 전용 경로로 요청해 주세요.")
         function = partial(runtime.bid, token, event_id, body, confirm_only=body.get("confirm_only", False)) if bidding else partial(runtime.live, token, event_id, body, request_started=started)
         value = await to_thread.run_sync(function, limiter=runtime.bid_limiter if bidding else runtime.read_limiter)
-        runtime.check_epoch(request.headers.get(EPOCH_HEADER))
+        runtime.check_epoch(server_epoch)
         elapsed = max(0, (monotonic()-started)*1000)
         if bidding:
             value["server_elapsed_ms"] = elapsed
