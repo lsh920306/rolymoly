@@ -29,6 +29,9 @@ Streamlit 배포 시작 파일은 `streamlit_app.py`입니다. 설치·관리자
 
 - [운영 흐름](CURRENT_FLOW.md)
 - [구현·검증 현황과 남은 작업](docs/ROLYMOLY_IMPLEMENTATION_REPORT.md)
+- [80명 경매 지연 비교와 정합성 검증](docs/AUCTION_LATENCY_VERIFICATION.md)
+- [60명 운영·최대 80명 및 무료 RPC 대안 검토](docs/AUCTION_HOSTING_REVIEW.md)
 - [배포 안내](DEPLOYMENT.md)
+- [지역 서버 배포 준비](docs/REGIONAL_DEPLOYMENT.md)
 
 검수 앱의 경매 응답성은 추가 확인 중입니다. 실제 운영 전에는 구현·검증 현황의 최신 결과를 확인하세요.

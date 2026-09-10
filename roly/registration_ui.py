@@ -55,7 +55,7 @@ def close_creation():
     st.session_state.t_create_open = False
 
 
-@st.dialog("경매 생성", width="medium", on_dismiss=close_creation)
+@st.dialog("경매 내전 만들기", width="medium", on_dismiss=close_creation)
 def creation_dialog(service, token):
     actor = service.core.session(token)
     if "token" in st.session_state and token != st.session_state.get("token"):
@@ -78,7 +78,7 @@ def creation_dialog(service, token):
         description = st.text_area("참가 안내 (선택)", max_chars=2000, height=90,
             placeholder="참가자에게 필요한 안내를 적어주세요", key=f"t_create_description_{request_key}")
         st.caption(f"팀당 5명 · 총 {team_count * 5}명 · 한국 시간 기준")
-        submit = st.form_submit_button("경매 생성", type="primary", width="stretch")
+        submit = st.form_submit_button("경매 내전 만들기", type="primary", width="stretch")
     if submit:
         def create():
             body = draft.get("retry_body") or {

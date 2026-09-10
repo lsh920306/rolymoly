@@ -205,7 +205,7 @@ class HomeUITests(unittest.TestCase):
         expected = {*active_ids["NORMAL"], *active_ids["AUCTION"]}
         self.assertEqual(set(shown), {f"home_event_{event_id}" for event_id in expected})
         self.assertEqual(len(shown), len(expected))
-        for title in ("일반 내전", "경매 내전", "내전 목록"):
+        for title in ("일반 내전 만들기", "경매 내전 만들기", "내전 목록"):
             self.assertEqual([item.value for item in self.at.subheader].count(title), 1)
         self.assertNotIn("경매 일정", [item.value for item in self.at.subheader])
 
@@ -269,7 +269,7 @@ class HomeUITests(unittest.TestCase):
         self.at.session_state["focus_event"] = events_before[0]["id"]
         normal_button.click().run()
         self.assert_clean()
-        self.assertEqual(self.at.title[0].value, "일반내전")
+        self.assertEqual(self.at.title[0].value, "일반 내전 만들기")
         self.assertTrue(any(item.label == "내전 이름" for item in self.at.text_input))
         self.assertNotIn("focus_event", self.at.session_state)
         self.at.switch_page("app_pages/home.py").run()
@@ -278,7 +278,7 @@ class HomeUITests(unittest.TestCase):
         self.at.button(key="home_create_auction").click().run()
         self.assert_clean()
         self.assertTrue(self.at.get("dialog"))
-        self.assertTrue(any(item.label == "경매 생성" for item in self.at.button))
+        self.assertTrue(any(item.label == "경매 내전 만들기" and item.proto.is_form_submitter for item in self.at.button))
         self.assertNotIn("t_preparation_dialog", self.at.session_state)
         self.assertNotIn("home_dialog", self.at.session_state)
         self.assertEqual({key: self.at.session_state[key] for key in identity}, identity)

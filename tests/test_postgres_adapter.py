@@ -101,6 +101,53 @@ class PostgresAdapterTests(unittest.TestCase):
         capability.start()
         self.addCleanup(capability.stop)
 
+    @staticmethod
+    def migration_driver(version):
+        class MigrationDriver(RecordingDriver):
+            def execute(self, statement, parameters=None):
+                result = super().execute(statement, parameters)
+                text = statement if isinstance(statement, str) else statement.as_string()
+                if "COALESCE(MAX(version),0)" in text:
+                    return RecordingCursor([Row(("version",), (version,))], self)
+                if "SELECT rolname FROM pg_roles" in text:
+                    return RecordingCursor([], self)
+                return result
+        return MigrationDriver()
+
+    def test_fresh_and_v7_migrations_install_change_tracking_before_final_version(self):
+        from roly import postgres
+        for version in (0, 7):
+            with self.subTest(version=version):
+                raw = self.migration_driver(version)
+                database = PostgresConnection("rolymoly", raw)
+                with patch.object(postgres, "connect", return_value=database), \
+                     patch("roly.member_ranks.initialize_ranks"), \
+                     patch("roly.member_profile.initialize_postgres"):
+                    postgres.initialize()
+                statements = [query for query, parameters in raw.calls]
+                change_at = next(i for i, query in enumerate(statements) if query.startswith("CREATE TABLE IF NOT EXISTS _auction_versions"))
+                revoke_at = next(i for i, query in enumerate(statements) if query.startswith("REVOKE ALL ON SCHEMA"))
+                self.assertLess(change_at, revoke_at)
+                self.assertTrue(any("pg_catalog.pg_notify" in query for query in statements))
+                self.assertTrue(any(query.startswith("CREATE TRIGGER auction_change") for query in statements))
+                versions = [parameters[0] for query, parameters in raw.calls
+                            if query.startswith("INSERT INTO _schema_migrations(version,applied_at) VALUES(%s")]
+                self.assertEqual(versions, [8])
+                self.assertEqual(raw.calls[-1], ("COMMIT", None))
+
+    def test_change_tracking_migration_failure_rolls_back_without_version_advance(self):
+        from roly import postgres
+        raw = self.migration_driver(7)
+        raw.fail_on = "CREATE TRIGGER auction_change"
+        database = PostgresConnection("rolymoly", raw)
+        with patch.object(postgres, "connect", return_value=database), \
+             patch("roly.member_ranks.initialize_ranks"):
+            with self.assertRaises(sqlite3.IntegrityError):
+                postgres.initialize()
+        self.assertEqual(raw.calls[-1], ("ROLLBACK", None))
+        self.assertFalse(any(query.startswith("INSERT INTO _schema_migrations") for query, _ in raw.calls))
+        self.assertFalse(any(query == "COMMIT" for query, _ in raw.calls))
+
     def test_complete_live_view_accepts_safe_clock_and_coalesce_in_one_batch(self):
         from roly.core import session_query
         from roly.live_auction import LiveAuction

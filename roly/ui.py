@@ -341,7 +341,7 @@ def run():
             st.Page("app_pages/home.py", title="라운지", icon=":material/home:", default=True),
             st.Page("app_pages/members.py", title="회원", icon=":material/group:"),
             st.Page("app_pages/profile.py", title="회원 프로필", url_path="profile", visibility="hidden"),
-            st.Page("app_pages/normal.py", title="일반내전", icon=":material/sports_esports:"),
+            st.Page("app_pages/normal.py", title="일반 내전 만들기", icon=":material/sports_esports:"),
             st.Page("app_pages/auction.py", title="경매", icon=":material/gavel:"),
             st.Page("app_pages/events.py", title="경기 기록", icon=":material/emoji_events:"),
             st.Page("app_pages/join.py", title="내 계정" if actor else "회원가입", icon=":material/person_add:"),

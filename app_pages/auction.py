@@ -35,7 +35,7 @@ if creation_preset == "AUCTION":
 if not live_page:
     heading("경매", "참가자와 팀장을 확정하고 경매와 대진을 준비합니다.")
 if staff and not live_page:
-    if st.button("경매 만들기", type="primary", icon=":material/add:", key="t_open_create"):
+    if st.button("경매 내전 만들기", type="primary", icon=":material/add:", key="t_open_create"):
         st.session_state.t_create_open = True
         st.session_state.pop("t_preparation_dialog", None)
 elif not staff:
@@ -73,7 +73,7 @@ with detail_area:
         st.write(event["description"])
     progress_steps(status)
     if live_page and staff:
-        if st.button("경매 만들기", icon=":material/add:", key="t_open_create"):
+        if st.button("경매 내전 만들기", icon=":material/add:", key="t_open_create"):
             st.session_state.t_create_open = True
             st.session_state.pop("t_preparation_dialog", None)
             st.rerun()

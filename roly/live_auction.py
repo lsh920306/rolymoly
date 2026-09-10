@@ -81,6 +81,14 @@ class LiveAuction:
                 type TEXT NOT NULL,detail TEXT NOT NULL,created_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS live_bid_event ON live_bids(event_id,id);
             """)
+            from .auction_state import initialize_changes
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                initialize_changes(db)
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
 
     def _now(self, db):
         if self.core.is_postgres and not self._injected_clock:
@@ -956,9 +964,13 @@ class LiveAuction:
         sampled_clock = float(batches.pop()[0][0]) if clock_in_batch else None
         actor_rows = batches.pop(0) if actor_query is not None else []
         actor = dict(actor_rows[0]) if actor_rows else None
+        return actor, self._assemble_view(event_id, batches, db, sampled_clock=sampled_clock, received=received)
+
+    def _assemble_view(self, event_id, batches, db=None, *, sampled_clock=None, received=None):
+        """Project already fetched rows for both ordinary and shared reads."""
         header, lots, bids, events, teams, players, profiles = batches
         if not header:
-            return actor, None
+            return None
         result = dict(header[0])
         event = {"id": event_id, "status": result.pop("workflow_status"),
                  "created_by": result.pop("host_id"), "kind": result.pop("event_kind"),
@@ -988,7 +1000,7 @@ class LiveAuction:
             player["riot_profile"] = deepcopy(profile) if matches else None
         # Account for local conversion time after the final database clock
         # sample. This duration uses a monotonic clock, never wall time.
-        stamp = sampled_clock + max(0, time.monotonic()-received) if clock_in_batch else self._now(db)
+        stamp = sampled_clock + max(0, time.monotonic()-received) if sampled_clock is not None else self._now(db)
         result["server_now"] = stamp
         result["current_lot"] = next((lot for lot in result["lots"] if lot["id"] == result["current_lot_id"]), None)
         for lot in result["lots"]:
@@ -1006,7 +1018,7 @@ class LiveAuction:
         result["unsold_count"] = sum(p["team_id"] is None and p["state"] == "UNSOLD" for p in players)
         result["queued_count"] = sum(lot["status"] == "QUEUED" for lot in result["lots"])
         result["worker_error"] = self._worker_error()
-        return actor, result
+        return result
 
     def has_active_sessions(self):
         return bool(self._worker_read("SELECT 1 FROM live_sessions WHERE status IN ('READY','RUNNING','WAITING','PAUSED') LIMIT 1"))

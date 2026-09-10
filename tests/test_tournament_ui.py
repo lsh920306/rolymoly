@@ -68,6 +68,8 @@ class TournamentUITests(unittest.TestCase):
 
     def widget(self, kind, label):
         found = [widget for widget in getattr(self.app, kind) if widget.label == label]
+        if kind == "button" and label == "경매 내전 만들기":
+            found = [widget for widget in found if widget.proto.is_form_submitter]
         self.assertEqual(len(found), 1, f"Expected one {kind}: {label}")
         return found[0]
 
@@ -83,7 +85,7 @@ class TournamentUITests(unittest.TestCase):
         self.healthy()
         self.widget("text_input", "경매 이름").set_value("20인 대회 운영 검증")
         self.widget("text_area", "참가 안내 (선택)").set_value("참가자 확인 후 팀을 편성합니다.")
-        self.click("경매 생성")
+        self.click("경매 내전 만들기")
         event_id = self.app.session_state["auction_event"]
         event = self.service.get_event(event_id)
         self.assertEqual((event["status"], event["team_count"], event["build_mode"]), ("DRAFT", 4, "AUCTION"))
@@ -220,7 +222,7 @@ class TournamentUITests(unittest.TestCase):
                 self.healthy()
                 self.widget("text_input", "경매 이름").set_value(f"{team_count}팀 경매 대회")
                 self.widget("selectbox", "경기 방식").set_value("GROUP_STAGE")
-                self.click("경매 생성")
+                self.click("경매 내전 만들기")
                 event = self.service.get_event(self.app.session_state["auction_event"])
                 self.assertEqual((event["team_count"], event["build_mode"], event["format"]), (team_count, "AUCTION", "GROUP_STAGE"))
                 self.assertEqual(self.app.selectbox(key="auction_event").value, event["id"])
@@ -248,10 +250,10 @@ class TournamentUITests(unittest.TestCase):
         with self.assertRaises((ValueError, PermissionError)):
             self.service.open_recruitment(other_token, event_id)
         self.app = self.new_app(None)
-        self.assertFalse(any(button.label in ("경매 만들기", "경매 생성", "참가자 선택 시작") for button in self.app.button))
+        self.assertFalse(any(button.label in ("경매 내전 만들기", "참가자 선택 시작") for button in self.app.button))
         self.core.create_account(self.token, "readonlymember", "readonly-member-password", role="member", member_id=self.ids[1])
         self.app = self.new_app(self.core.login("readonlymember", "readonly-member-password"))
-        self.assertTrue(any(button.label == "경매 만들기" for button in self.app.button))
+        self.assertTrue(any(button.label == "경매 내전 만들기" for button in self.app.button))
         self.assertFalse(any(button.label == "참가자 선택 시작" for button in self.app.button))
         self.assertEqual(self.service.get_event(event_id)["status"], "DRAFT")
         own_event_id = self.create_via_ui()

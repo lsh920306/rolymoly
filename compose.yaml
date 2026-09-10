@@ -1,0 +1,45 @@
+name: rolymoly-regional
+services:
+  app:
+    image: rolymoly-regional:${ROLYMOLY_IMAGE_TAG:-review}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # The in-process receipt ledger and server epoch require one app replica.
+    scale: 1
+    init: true
+    user: "10001:10001"
+    restart: unless-stopped
+    stop_signal: SIGINT
+    stop_grace_period: 30s
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      ROLYMOLY_DATABASE_TARGET: supabase://rolymoly
+      ROLYMOLY_DATA_DIR: /var/lib/rolymoly
+      ROLYMOLY_APP_ENVIRONMENT: ${ROLYMOLY_APP_ENVIRONMENT:-test}
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - type: bind
+        source: ${ROLYMOLY_SECRETS_FILE:?Set an existing absolute secrets.toml path outside the source folder}
+        target: /app/.streamlit/secrets.toml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: app-data
+        target: /var/lib/rolymoly
+    tmpfs:
+      - /tmp:mode=1777
+      - /home/rolymoly/.streamlit:uid=10001,gid=10001,mode=0700
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  app-data:

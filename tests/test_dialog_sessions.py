@@ -76,7 +76,7 @@ class DialogSessionTests(unittest.TestCase):
 
     def create_payload(self, app):
         next(widget for widget in app.text_input if widget.label == "경매 이름").set_value("Original private draft")
-        next(widget for widget in app.button if widget.label == "경매 생성").click()
+        next(widget for widget in app.button if widget.label == "경매 내전 만들기").click()
         return app._tree.get_widget_states()
 
     def event(self):
@@ -105,7 +105,7 @@ class DialogSessionTests(unittest.TestCase):
         app.session_state["dialog_token"] = fresh
         app.run()
         self.healthy(app)
-        self.assertTrue(any(widget.label == "경매 생성" for widget in app.button))
+        self.assertTrue(any(widget.label == "경매 내전 만들기" for widget in app.button))
 
     def test_pending_login_cannot_render_creation_form(self):
         self.register("pending")

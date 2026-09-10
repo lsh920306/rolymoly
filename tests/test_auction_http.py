@@ -364,13 +364,13 @@ class AuctionHTTPTests(unittest.TestCase):
 class AuctionHTTPConfigurationTests(unittest.TestCase):
     def test_route_base_reads_public_config_at_registration_and_normalizes_slashes(self):
         with patch("streamlit.get_option", side_effect=["", "/", "review/app/"]) as option:
-            self.assertEqual([route.path for route in http.routes()], ["/api/auction/live", "/api/auction/bid"])
-            self.assertEqual([route.path for route in http.routes()], ["/api/auction/live", "/api/auction/bid"])
-            self.assertEqual([route.path for route in http.routes()], ["/review/app/api/auction/live", "/review/app/api/auction/bid"])
+            self.assertEqual([route.path for route in http.routes()], ["/api/auction/live", "/api/auction/bid", "/api/auction/ws"])
+            self.assertEqual([route.path for route in http.routes()], ["/api/auction/live", "/api/auction/bid", "/api/auction/ws"])
+            self.assertEqual([route.path for route in http.routes()], ["/review/app/api/auction/live", "/review/app/api/auction/bid", "/review/app/api/auction/ws"])
         self.assertEqual(option.call_count, 3)
         with patch("streamlit.get_option", side_effect=AssertionError("explicit base read configuration")):
             self.assertEqual([route.path for route in http.routes(base_url="/~/+/")],
-                             ["/~/+/api/auction/live", "/~/+/api/auction/bid"])
+                             ["/~/+/api/auction/live", "/~/+/api/auction/bid", "/~/+/api/auction/ws"])
 
     def test_route_base_rejects_dynamic_or_non_path_configuration(self):
         for value in (42, "https://foreign.test", "review//app", "review/../app", "{path:path}", "app?query", "app#fragment", "app\\path", "app\n"):

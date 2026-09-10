@@ -89,7 +89,7 @@ with st.container(horizontal=True, horizontal_alignment="center"):
 
         main, side = st.columns([2.1, 1], gap="medium")
         with main:
-            for kind, label in (("NORMAL", "일반 내전"), ("AUCTION", "경매 내전")):
+            for kind, label in (("NORMAL", "일반 내전 만들기"), ("AUCTION", "경매 내전 만들기")):
                 with st.container(border=True, gap="small", key=f"lounge_{kind.lower()}"):
                     with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
                         st.subheader(label, width="content")

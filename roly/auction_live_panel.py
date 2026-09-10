@@ -9,7 +9,7 @@ from uuid import uuid4
 import streamlit as st
 
 from .auction_components import CSS as STAGE_CSS, JS as STAGE_JS, stage_data
-from .auction_http_client import HTTP_JS
+from .auction_http_client import HTTP_JS, PUSH_JS
 
 
 HTML = '<section class="live-panel"><div class="live-stage"><section class="auction-component"></section></div><div class="live-bid-controls"></div></section>'
@@ -44,7 +44,7 @@ const validCommand = value => value && typeof value.request_id === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.request_id) &&
   integer(value.lot_id) && integer(value.amount);
 
-export function createLiveChannel({context, now, uuid, emit, readPending, writePending,pollInterval=500,independentReads=false}) {
+export function createLiveChannel({context, now, uuid, emit, readPending, writePending,pollInterval=500,independentReads=false,readsAllowed=()=>true}) {
   let restored = null;
   try { restored = readPending(); } catch (_) {}
   const channel = {
@@ -55,6 +55,12 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
     writeOutstanding:null,writeTimeouts:0,commandMetrics:null,
     confirmAt:null,
     save() { try { writePending(this.pending); } catch (_) {} },
+    streamRequest() {
+      const request={context:this.context,epoch:this.epoch,seq:++this.sequence,sent_ms:now(),command:null};
+      this.sent.set(request.seq,request);
+      while(this.sent.size>32)this.sent.delete(this.sent.keys().next().value);
+      return request;
+    },
     send(force=false,readOnly=false) {
       if(this.outstanding && !force && !(independentReads && this.pending && !readOnly)) return null;
       const request={context:this.context,epoch:this.epoch,seq:++this.sequence,sent_ms:now(),
@@ -163,6 +169,31 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
       }
       if(!this.pending)this.nextAt=now();
     },
+    receivePong(sentMs,serverNow,processing=0) {
+      if(!finite(sentMs) || !finite(serverNow) || sentMs>now())return;
+      const received=now(),rtt=received-sentMs;
+      processing=finite(processing)?Math.max(0,processing):0;
+      if(rtt>30000 || processing>rtt+100)return;
+      const residual=Math.max(0,rtt-processing);
+      const sample={at:received,residual,offset:serverNow*1000+residual/2-received};
+      if(!this.bestClock || received-this.bestClock.at>60000 || residual<=this.bestClock.residual)this.bestClock=sample;
+      this.metrics={...this.metrics,round_trip_ms:rtt,server_elapsed_ms:processing,residual_ms:residual};
+      this.lastContact=received;
+    },
+    receivePush(transport,serverNow) {
+      if(transport?.context!==this.context)return {fresh:false,matched:false};
+      const echo=transport.request,original=echo?.epoch===this.epoch?this.sent.get(echo.seq):null;
+      const matched=Boolean(original && original.sent_ms===echo.sent_ms);
+      if(matched){
+        this.receivePong(original.sent_ms,serverNow,Number(transport.server_elapsed_ms || 0)+Number(transport.snapshot_elapsed_ms || 0));
+        this.sent.delete(echo.seq);
+      }
+      // The push delivery has already checked commit revisions. An older HTTP
+      // request sequence must not suppress a newer authoritative socket frame.
+      if(this.outstanding && !this.outstanding.command){this.sent.delete(this.outstanding.seq);this.outstanding=null;}
+      this.timeouts=0;this.lastContact=now();
+      return {fresh:true,matched};
+    },
     estimatedServerNow() { return this.bestClock ? (now()+this.bestClock.offset)/1000 : null; },
     stale() { return !this.bestClock || now()-this.lastContact>5000; },
     pump(visible=true) {
@@ -177,6 +208,7 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
             this.confirmAt=null;return this.send(true);
           }
         }
+        if(!readsAllowed())return null;
         if(this.outstanding) {
           if(now()-this.outstanding.sent_ms>=Math.min(10000,2000*(2**Math.min(this.timeouts,3)))) {
             this.timeouts++;return this.send(true,true);
@@ -198,7 +230,7 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
 """
 
 PANEL_JS = r"""
-export default function renderLivePanel({parentElement,data,setTriggerValue,httpFrame=false}) {
+export default function renderLivePanel({parentElement,data,setTriggerValue,httpFrame=false,pushFrame=false}) {
   const root=parentElement.querySelector('.live-panel');
   if(!root) return;
   const doc=root.ownerDocument;
@@ -210,6 +242,7 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
   old?.dispose?.();
   const sameServer=!data.direct || !old?.direct || old.direct.epoch===data.direct.epoch;
   const memory=old && old.context===context && sameServer ? old : {context,draft:0,draftLot:null,edited:false,stage:null,control:null};
+  if(old && old!==memory){old.mounted=false;old.delivery?.dispose?.();}
   parentElement._rolyLivePanel=memory;
   if(!httpFrame)memory.frameworkGeneration=(memory.frameworkGeneration || 0)+1;
   const frameworkGeneration=memory.frameworkGeneration;
@@ -224,14 +257,20 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
   // The bridge is replaced each render, while the channel and UUID survive.
   if(!memory.channel) {
     const storageKey='rolymoly.pending-bid.'+context;
-    memory.channel= createLiveChannel({context,now,uuid,emit:request=>memory.emit('event',request),pollInterval:memory.direct?250:500,independentReads:Boolean(memory.direct),
+    memory.channel= createLiveChannel({context,now,uuid,emit:request=>memory.emit('event',request),pollInterval:memory.direct?1000:500,independentReads:Boolean(memory.direct),
+      readsAllowed:()=>!memory.delivery?.streaming?.(),
       readPending:()=>JSON.parse(view.sessionStorage.getItem(storageKey) || 'null'),
       writePending:pending=>pending ? view.sessionStorage.setItem(storageKey,JSON.stringify(pending)) : view.sessionStorage.removeItem(storageKey)});
   }
   const live=memory.channel;
   if(memory.direct && !memory.delivery) {
     const active=()=>memory.mounted && parentElement.isConnected && parentElement._rolyLivePanel===memory;
-    memory.delivery=createHttpDelivery({config:memory.direct,fetcher:(url,options)=>view.fetch(url,options),
+    const createDelivery=memory.direct.ws_url?createPushDelivery:createHttpDelivery;
+    memory.delivery=createDelivery({config:memory.direct,context,now,
+      socketFactory:url=>new view.WebSocket(url),makeRequest:()=>live.streamRequest(),
+      onMode:mode=>{memory.deliveryMode=mode;memory.refresh?.();},
+      onClock:frame=>{if(active()){live.receivePong(frame.sent_ms,frame.server_now,frame.server_elapsed_ms);memory.connectionMessage='';memory.refresh?.();}},
+      fetcher:(url,options)=>view.fetch(url,options),
       readToken:()=>view.sessionStorage.getItem(memory.direct.storage_key),
       onAck:result=>{
         if(!active())return;
@@ -239,9 +278,9 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
           server_elapsed_ms:result.server_elapsed_ms,callback_elapsed_ms:result.callback_elapsed_ms});
         memory.refresh?.();
       },
-      onFrame:panel=>{
+      onFrame:(panel,source)=>{
         if(!active())return;
-        renderLivePanel({parentElement,data:{...panel,direct:memory.direct},setTriggerValue:memory.trigger,httpFrame:true});
+        renderLivePanel({parentElement,data:{...panel,direct:memory.direct},setTriggerValue:memory.trigger,httpFrame:true,pushFrame:Boolean(source?.push)});
       },
       onError:(message,reload)=>{
         if(!active())return;
@@ -250,13 +289,17 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
         memory.refresh?.();
       }});
   }
-  // Once the HTTP channel is live, a slower Streamlit chrome refresh cannot
+  memory.delivery?.start?.();
+  // Once the direct channel is live, a slower Streamlit chrome refresh cannot
   // overwrite the newer player, price, authority or clock with old props.
-  const incoming=memory.httpReceived && !httpFrame ? {fresh:false} : live.receive(data.transport,data.server_now);
+  const incoming=memory.httpReceived && !httpFrame ? {fresh:false} :
+    pushFrame?live.receivePush(data.transport,data.server_now):live.receive(data.transport,data.server_now);
   if(httpFrame && incoming.fresh) {
     memory.httpReceived=true;memory.connectionMessage='';
-    if(data.views && typeof view.CustomEvent==='function') {
+    if(Object.hasOwn(data,'views') && typeof view.CustomEvent==='function') {
       const views=view._rolyAuctionViews ||=new Map();
+      // A null entry removes all old companion data and marks an unavailable
+      // event, so a later slow framework repaint cannot resurrect old cards.
       views.delete(context);views.set(context,data.views);
       while(views.size>8)views.delete(views.keys().next().value);
       view.dispatchEvent(new view.CustomEvent('roly-auction-frame',{detail:{context,views:data.views}}));
@@ -274,6 +317,8 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     memory.control=data.control || null;
     memory.status=data.status || null;
     memory.lot=data.lot || null;
+    memory.serverNow=data.server_now;
+    memory.revision=data.transport?.revision;
     memory.stateAvailable=Boolean(data.available);
   }
   const make=(tag,cls,text)=>{const node=doc.createElement(tag);node.className=cls;if(text!==undefined)node.textContent=String(text);return node;};
@@ -379,7 +424,7 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     root.dataset.snapshotElapsedMs=String(live.metrics.snapshot_elapsed_ms ?? '');
     root.dataset.callbackElapsedMs=String(live.metrics.callback_elapsed_ms ?? '');
     root.dataset.viewElapsedMs=String(live.metrics.view_elapsed_ms ?? '');
-    root.dataset.serverNow=String(data.server_now ?? '');
+    root.dataset.serverNow=String(memory.serverNow ?? '');
     root.dataset.clientDraftChangeMs=String(memory.draftChangeMs ?? '');
     root.dataset.pollPending=String(Boolean(live.outstanding));
     root.dataset.lastBidRequestId=live.lastCommandTiming?.request_id || '';
@@ -389,7 +434,8 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     root.dataset.lastBidServerElapsedMs=String(live.commandMetrics?.server_elapsed_ms ?? '');
     root.dataset.lastBidCallbackElapsedMs=String(live.commandMetrics?.callback_elapsed_ms ?? '');
     root.dataset.clientTimeOriginMs=String(view.performance.timeOrigin ?? '');
-    root.dataset.deliveryMode=memory.direct?'http':'streamlit';
+    root.dataset.deliveryMode=memory.direct?(memory.deliveryMode || 'http'):'streamlit';
+    root.dataset.stateRevision=String(memory.revision ?? '');
   }
   memory.refresh=refresh;
   const recordDraftChange=started=>{memory.draftChangeMs=now()-started;root.dataset.clientDraftChangeMs=String(memory.draftChangeMs);};
@@ -406,7 +452,7 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
   nodes.reset.onclick=()=>{if(allowEdit())setDraft(Number(memory.lot?.highest_bid || 0));};
   nodes.submit.onclick=()=>{if(allowEdit() && validAmount()){live.submit(memory.lot.id,memory.draft);refresh();}};
   nodes.input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();nodes.submit.onclick();}};
-  const tick=()=>{if(parentElement.isConnected){live.pump(doc.visibilityState!=='hidden');refresh();}};
+  const tick=()=>{if(parentElement.isConnected){memory.delivery?.tick?.();live.pump(doc.visibilityState!=='hidden');refresh();}};
   const onReturn=()=>{if(doc.visibilityState!=='hidden'){live.nextAt=now();tick();}};
   doc.addEventListener('visibilitychange',onReturn);view.addEventListener('focus',onReturn);view.addEventListener('pageshow',onReturn);
   tick();const interval=view.setInterval(tick,100);
@@ -430,11 +476,14 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
   return ()=>{
     if(memory.frameworkGeneration!==frameworkGeneration || parentElement._rolyLivePanel!==memory)return;
     memory.mounted=false;memory.dispose?.();
+    // Framework cleanup also runs immediately before a synchronous rerender.
+    // Release the transport only if no replacement mounted in this microtask.
+    Promise.resolve().then(()=>{if(!memory.mounted){memory.delivery?.dispose?.();memory.delivery=null;}});
   };
 }
 """
 
-JS = STAGE_JS.replace("export default function(", "function renderAuctionStage(", 1) + CHANNEL_JS + HTTP_JS + PANEL_JS
+JS = STAGE_JS.replace("export default function(", "function renderAuctionStage(", 1) + CHANNEL_JS + HTTP_JS + PUSH_JS + PANEL_JS
 COMPONENT_REVISION = sha256((HTML + "\0" + CSS + "\0" + JS).encode()).hexdigest()[:16]
 
 

@@ -5,7 +5,7 @@ from roly.roster_ui import roster_editor
 from roly.registration_ui import creation_draft, rotate_creation
 
 core, competition, token, actor = context()
-heading("일반내전", "포지션별 참가자를 선택하고 전력점수를 기준으로 팀을 편성합니다.")
+heading("일반 내전 만들기", "포지션별 참가자를 선택하고 전력점수를 기준으로 팀을 편성합니다.")
 require_member(actor)
 st.caption("카카오톡에서 신청받은 명단을 확인하고 참가자를 등록해 주세요.")
 members = core.list_members()
@@ -33,7 +33,7 @@ with st.container(width=900):
                                 matching_members=core.list_members(include_pending=True))
     balanced = st.checkbox("전력점수로 팀 균형 맞추기", value=True,
         help="해제하면 각 포지션의 선택 순서대로 팀을 구성합니다.", key=f"normal_balance_{count}_{request_key}")
-    if st.button("팀 편성하고 내전 만들기", type="primary", icon=":material/groups:", key=f"normal_create_submit_{request_key}"):
+    if st.button("일반 내전 만들기", type="primary", icon=":material/groups:", key=f"normal_create_submit_{request_key}"):
         def create():
             body = draft.get("retry_body") or {"assignments": assignments, "title": title,
                 "balanced": balanced, "format_name": format_name}

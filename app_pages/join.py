@@ -51,8 +51,8 @@ if actor:
         nickname_change_control(core, token, actor, member["id"], key="account_nickname_change")
         st.caption("닉네임은 직접 변경할 수 있습니다. 주·부 포지션과 클랜 티어 변경은 운영진에게 요청해 주세요.")
         st.caption("내전 참가 신청은 카카오톡에서 받습니다. 개설자가 확정 명단을 등록하면 내 계정에 연결됩니다.")
-        st.page_link("app_pages/normal.py", label="일반내전 개설", icon=":material/sports_esports:")
-        st.page_link("app_pages/auction.py", label="경매 열기", icon=":material/gavel:")
+        st.page_link("app_pages/normal.py", label="일반 내전 만들기", icon=":material/sports_esports:")
+        st.page_link("app_pages/auction.py", label="경매 내전 만들기", icon=":material/gavel:")
     with st.expander("비밀번호 변경"):
         with st.form("change_password", clear_on_submit=True):
             current_password = st.text_input("현재 비밀번호", type="password")

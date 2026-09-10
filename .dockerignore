@@ -1,0 +1,35 @@
+# Allow only reviewed runtime inputs into the build context.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!app.py
+!streamlit_app.py
+!roly/
+!roly/*.py
+!app_pages/
+!app_pages/*.py
+!scripts/
+!scripts/*.py
+!static/
+!static/*
+!.streamlit/
+!.streamlit/config.toml
+
+# Keep these exclusions last, even if broader source globs change later.
+**/secrets.toml
+**/.env
+**/.env.*
+**/*.sqlite3
+**/*.db
+**/*.log
+**/__pycache__
+**/*.pyc
+.data
+.venv
+.git
+.agents
+.codex
+test-artifacts
+review-source
+dist

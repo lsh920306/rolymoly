@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 from anyio import CapacityLimiter, to_thread
 from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
 
 from .auction_commands import clean_envelope, context_id, execute_command
 
@@ -84,6 +84,7 @@ class AuctionHTTP:
         self.max_contexts, self.max_commands = max_contexts, max_commands
         self.max_context_commands = max_context_commands
         self.read_limiter, self.bid_limiter = CapacityLimiter(2), CapacityLimiter(2)
+        self.push = None
 
     def check_epoch(self, value):
         if not self.active or value != self.epoch:
@@ -218,7 +219,8 @@ def transport_config(db_path, token, event_id):
         active = _runtime
         if active is None or not active.active or active.db_path != str(db_path):
             return None
-        return {"live_url": "/api/auction/live", "bid_url": "/api/auction/bid", "epoch": active.epoch,
+        return {"live_url": "/api/auction/live", "bid_url": "/api/auction/bid",
+                **({"ws_url": "/api/auction/ws"} if active.push is not None else {}), "epoch": active.epoch,
                 "storage_key": "roly-login-" + sha256(str(db_path).encode()).hexdigest()[:24], "event_id": event_id}
 
 
@@ -287,12 +289,25 @@ async def handle(request, *, bidding):
         event_id = body.get("event_id")
         if not bidding and body.get("confirm_only"):
             raise TransportError("view_cannot_confirm", "입찰 확인은 입찰 전용 경로로 요청해 주세요.")
-        function = partial(runtime.bid, token, event_id, body, confirm_only=body.get("confirm_only", False)) if bidding else partial(runtime.live, token, event_id, body, request_started=started)
-        value = await to_thread.run_sync(function, limiter=runtime.bid_limiter if bidding else runtime.read_limiter)
+        from .auction_metrics import measure_operation
+        with measure_operation() as metrics:
+            if not bidding and runtime.push is not None:
+                value = await runtime.push.snapshot(token, event_id, body)
+            else:
+                function = partial(runtime.bid, token, event_id, body, confirm_only=body.get("confirm_only", False)) if bidding else partial(runtime.live, token, event_id, body, request_started=started)
+                queued = monotonic()
+                def dispatched():
+                    metrics.record("dispatch", monotonic()-queued)
+                    return function()
+                value = await to_thread.run_sync(dispatched, limiter=runtime.bid_limiter if bidding else runtime.read_limiter)
+            value["timings"] = metrics.as_dict()
         runtime.check_epoch(server_epoch)
         elapsed = max(0, (monotonic()-started)*1000)
         if bidding:
             value["server_elapsed_ms"] = elapsed
+            if runtime.push is not None and value.get("ack", {}).get("status") == "accepted":
+                # Wake the shared reader without delaying the committed ACK.
+                runtime.push.notify(event_id)
         return _response(value)
     except TransportError as error:
         return _response({"error": {"code": error.code, "message": error.message, "reload_required": error.reload}}, error.status)
@@ -325,8 +340,10 @@ def routes(*, base_url=None):
         raise ValueError("The auction API base path must be a literal URL path")
     prefix = "/" + base_url if base_url else ""
     _logger.warning("Auction HTTP registered routes: base_path=%r", prefix)
+    from .auction_push import websocket_endpoint
     return [Route(prefix + "/api/auction/live", live_endpoint, methods=["POST"]),
-            Route(prefix + "/api/auction/bid", bid_endpoint, methods=["POST"])]
+            Route(prefix + "/api/auction/bid", bid_endpoint, methods=["POST"]),
+            WebSocketRoute(prefix + "/api/auction/ws", websocket_endpoint)]
 
 
 def _target():
@@ -345,6 +362,9 @@ async def lifespan(app):
     global _runtime
     target = await to_thread.run_sync(_target)
     runtime = AuctionHTTP(target) if target is not None else None
+    if runtime is not None:
+        from .auction_push import AuctionHub
+        runtime.push = AuctionHub(runtime)
     with _runtime_lock:
         if _runtime is not None:
             raise RuntimeError("Auction HTTP lifetime already active")
@@ -353,6 +373,8 @@ async def lifespan(app):
     try:
         yield
     finally:
+        if runtime is not None and runtime.push is not None:
+            await runtime.push.close()
         with _runtime_lock:
             if runtime is not None:
                 runtime.active = False

@@ -20,6 +20,8 @@ class CreationRequestUITests(unittest.TestCase):
 
     def widget(self, kind, label):
         found = [w for w in getattr(self.app, kind) if w.label == label]
+        if kind == "button" and label == "경매 내전 만들기":
+            found = [widget for widget in found if widget.proto.is_form_submitter]
         self.assertEqual(len(found), 1, label)
         return found[0]
 
@@ -34,7 +36,7 @@ class CreationRequestUITests(unittest.TestCase):
         self.widget("text_input", "내전 이름").set_value("같은 제목")
         self.widget("multiselect", "참가 회원 검색·선택").set_value(self.case.ids[:10]).run()
         self.widget("checkbox", "전력점수로 팀 균형 맞추기").set_value(False)
-        button = self.widget("button", "팀 편성하고 내전 만들기")
+        button = self.widget("button", "일반 내전 만들기")
         button.click()
         return self.app._tree.get_widget_states(), button.proto.id
 
@@ -54,7 +56,7 @@ class CreationRequestUITests(unittest.TestCase):
             self.healthy()
             self.assertTrue(self.app.error)
             self.assertEqual(self.event_count(), 1)
-            self.assertEqual(self.widget("button", "팀 편성하고 내전 만들기").proto.id, button_id)
+            self.assertEqual(self.widget("button", "일반 내전 만들기").proto.id, button_id)
             self.assertEqual(self.widget("text_input", "내전 이름").value, "같은 제목")
             self.assertEqual(self.widget("multiselect", "참가 회원 검색·선택").value, self.case.ids[:10])
             self.assertEqual(self.app.session_state["normal_creation_draft"]["request_key"], draft)
@@ -73,7 +75,7 @@ class CreationRequestUITests(unittest.TestCase):
         self.widget("text_input", "내전 이름").set_value("같은 제목")
         self.widget("multiselect", "참가 회원 검색·선택").set_value(self.case.ids[:10]).run()
         self.widget("checkbox", "전력점수로 팀 균형 맞추기").set_value(False)
-        self.widget("button", "팀 편성하고 내전 만들기").click().run()
+        self.widget("button", "일반 내전 만들기").click().run()
         self.healthy()
         self.assertEqual(self.event_count(), 2)
         self.assertEqual({e["title"] for e in self.comp.list_events()}, {"같은 제목"})
@@ -84,7 +86,7 @@ class CreationRequestUITests(unittest.TestCase):
         self.widget("text_input", "경매 이름").set_value("같은 경매")
         self.widget("text_area", "참가 안내 (선택)").set_value("재시도에도 보존할 안내")
         self.widget("selectbox", "경기 방식").set_value("GROUP_STAGE")
-        self.widget("button", "경매 생성").click()
+        self.widget("button", "경매 내전 만들기").click()
         request = self.app._tree.get_widget_states()
         draft = self.app.session_state["t_creation_draft"]["request_key"]
         original = TournamentService.create
@@ -118,7 +120,7 @@ class CreationRequestUITests(unittest.TestCase):
         self.assertEqual(self.widget("text_input", "경매 이름").value, "")
         self.assertEqual(self.widget("segmented_control", "참가 인원").value, 4)
         self.widget("text_input", "경매 이름").set_value("같은 경매")
-        self.widget("button", "경매 생성").click().run()
+        self.widget("button", "경매 내전 만들기").click().run()
         self.healthy()
         self.assertEqual(self.event_count(), 2)
 

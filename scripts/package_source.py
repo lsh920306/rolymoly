@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def build():
-    root_files = ["app.py", "streamlit_app.py", "requirements.txt", "run.bat", ".gitignore", "README.md", "DESIGN.md", "REVIEW.md", "CODE_REVIEW.md", "REHEARSAL.md", "DEPLOYMENT.md"]
+    root_files = ["app.py", "streamlit_app.py", "requirements.txt", "run.bat", ".gitignore", "Dockerfile", ".dockerignore", "compose.yaml", "README.md", "DESIGN.md", "REVIEW.md", "CODE_REVIEW.md", "REHEARSAL.md", "DEPLOYMENT.md"]
     sources = [ROOT / name for name in root_files]
     sources.extend(path for path in sorted(ROOT.glob("*.md")) if path not in sources)
     sources.extend(sorted((ROOT / "docs").glob("*.md")))

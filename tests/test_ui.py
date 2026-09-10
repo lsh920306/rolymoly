@@ -50,6 +50,8 @@ class AppUITests(unittest.TestCase):
         matches = [widget for widget in getattr(self.app, kind)
                    if (kind == "button" and label == "입찰하기" and (widget.key or "").startswith("live_bid_"))
                    or (label != "입찰하기" and widget.label == label)]
+        if kind == "button" and label == "경매 내전 만들기":
+            matches = [widget for widget in matches if widget.proto.is_form_submitter]
         self.assertEqual(len(matches), 1, f"Expected exactly one {kind}: {label}")
         return matches[0]
 
@@ -129,11 +131,11 @@ class AppUITests(unittest.TestCase):
         self.widget("text_input", "내전 이름").set_value("UI 10인 검증")
         chosen = [mid for role, ids in chosen_by_role.items() for mid in (ids[:1] if role == "SUP" else ids)]
         next(w for w in self.app.multiselect if (w.key or "").startswith("normal_roster_10_") and w.key.endswith("_members")).set_value(chosen).run()
-        self.click("팀 편성하고 내전 만들기")
+        self.click("일반 내전 만들기")
         self.assertTrue(self.app.error)
         self.assertEqual({event["id"] for event in self.competition.list_events()}, before)
         next(w for w in self.app.multiselect if (w.key or "").startswith("normal_roster_10_") and w.key.endswith("_members")).set_value([mid for ids in chosen_by_role.values() for mid in ids]).run()
-        self.click("팀 편성하고 내전 만들기")
+        self.click("일반 내전 만들기")
         created = [event for event in self.competition.list_events() if event["id"] not in before]
         self.assertEqual(len(created), 1)
         event = self.competition.get_event(created[0]["id"])
@@ -202,7 +204,7 @@ class AppUITests(unittest.TestCase):
         self.app.button(key="t_open_create").click().run()
         self.assertHealthy()
         next(w for w in self.app.text_input if (w.key or "").startswith("t_create_title_")).set_value("진행 중 새 경매")
-        self.click("경매 생성")
+        self.click("경매 내전 만들기")
         created_id = self.app.selectbox(key="auction_event").value
         self.assertNotEqual(created_id, event_id)
         self.assertEqual(self.competition.get_event(created_id)["status"], "DRAFT")

@@ -17,8 +17,10 @@ import sqlite3
 import threading
 from time import monotonic
 
+from .auction_metrics import measure_background, measure_stage
 
-SCHEMA_VERSION = 7
+
+SCHEMA_VERSION = 8
 POOL_MAX_SIZE = 6
 POOL_TIMEOUT = 5.0
 _pool_lock = threading.Lock()
@@ -309,7 +311,7 @@ class PostgresConnection:
     def _begin(self, *, writer):
         if self.in_transaction:
             raise sqlite3.ProgrammingError("이미 진행 중인 트랜잭션입니다.")
-        with self._pipeline():
+        with measure_stage("writer_begin" if writer else "read_begin"), self._pipeline():
             result = self._queue_begin(writer=writer)
         # Do not return before the pipeline has confirmed setup and the lock.
         return Cursor(result)
@@ -340,7 +342,7 @@ class PostgresConnection:
         if not prepared:
             return []
         try:
-            with self._pipeline():
+            with measure_stage("read_pipeline"), self._pipeline():
                 self._queue_begin(writer=False)
                 cursors = [self._raw.execute(query, parameters) for query, parameters in prepared]
                 # execute queues SQL; Connection.rollback() would synchronize
@@ -368,7 +370,7 @@ class PostgresConnection:
         if not prepared:
             raise sqlite3.ProgrammingError("쓰기 검증 조회가 필요합니다.")
         try:
-            with self._pipeline():
+            with measure_stage("writer_begin"), self._pipeline():
                 self._queue_begin(writer=True)
                 cursors = [self._raw.execute(query, parameters) for query, parameters in prepared]
             return [cursor.fetchall() for cursor in cursors]
@@ -403,7 +405,7 @@ class PostgresConnection:
         if not prepared:
             return []
         try:
-            with self._pipeline():
+            with measure_stage("write_pipeline"), self._pipeline():
                 cursors = [(self._raw.execute(query, parameters), generated)
                            for query, parameters, generated in prepared]
             return [Cursor(cursor, generated_id=generated) for cursor, generated in cursors]
@@ -426,7 +428,7 @@ class PostgresConnection:
             return []
         psycopg = _driver()
         try:
-            with self._pipeline():
+            with measure_stage("read_pipeline"), self._pipeline():
                 cursors = [self._raw.execute(query, parameters) for query, parameters in prepared]
             return [cursor.fetchall() for cursor in cursors]
         except psycopg.Error as error:
@@ -448,22 +450,27 @@ class PostgresConnection:
                 if re.match(r"\s*(SAVEPOINT|RELEASE|ROLLBACK\s+TO)\b", query, re.IGNORECASE):
                     raise sqlite3.ProgrammingError("SAVEPOINT에는 진행 중인 트랜잭션이 필요합니다.")
                 if control in ("COMMIT", "ROLLBACK"):
-                    return Cursor(self._raw.execute(control))
+                    with measure_stage(control.lower()):
+                        return Cursor(self._raw.execute(control))
                 first_code = " ".join(text for kind, text in _regions(query) if kind == "code").lstrip()
                 owned = True
                 self._begin(writer=not bool(re.match(r"(?:SELECT|SHOW)\b", first_code, re.IGNORECASE)))
             query, generated = _with_generated_id(query)
-            cursor = Cursor(self._raw.execute(_bind_query(query, parameters is not None), parameters), generated_id=generated)
+            with measure_stage("statement"):
+                cursor = Cursor(self._raw.execute(_bind_query(query, parameters is not None), parameters), generated_id=generated)
             if owned:
-                self._raw.commit()
+                with measure_stage("commit"):
+                    self._raw.commit()
             return cursor
         except psycopg.Error as error:
             if owned:
-                self._raw.rollback()
+                with measure_stage("rollback"):
+                    self._raw.rollback()
             raise _database_error(error) from None
         except BaseException:
             if owned:
-                self._raw.rollback()
+                with measure_stage("rollback"):
+                    self._raw.rollback()
             raise
 
     def executemany(self, query, parameters):
@@ -474,17 +481,21 @@ class PostgresConnection:
             if owned:
                 self._begin(writer=True)
             cursor = self._raw.cursor()
-            cursor.executemany(_bind_query(query), parameters)
+            with measure_stage("statement"):
+                cursor.executemany(_bind_query(query), parameters)
             if owned:
-                self._raw.commit()
+                with measure_stage("commit"):
+                    self._raw.commit()
             return Cursor(cursor)
         except psycopg.Error as error:
             if owned:
-                self._raw.rollback()
+                with measure_stage("rollback"):
+                    self._raw.rollback()
             raise _database_error(error) from None
         except BaseException:
             if owned:
-                self._raw.rollback()
+                with measure_stage("rollback"):
+                    self._raw.rollback()
             raise
 
     def executescript(self, script):
@@ -514,14 +525,16 @@ class PostgresConnection:
     def commit(self):
         self._require_open()
         try:
-            self._raw.commit()
+            with measure_stage("commit"):
+                self._raw.commit()
         except _driver().Error as error:
             raise _database_error(error) from None
 
     def rollback(self):
         self._require_open()
         try:
-            self._raw.rollback()
+            with measure_stage("rollback"):
+                self._raw.rollback()
         except _driver().Error as error:
             raise _database_error(error) from None
 
@@ -537,7 +550,8 @@ class PostgresConnection:
         # failed rollback discards this connection instead of reusing its state.
         try:
             if not self._raw.closed and self._raw.info.transaction_status != _driver().pq.TransactionStatus.IDLE:
-                self._raw.rollback()
+                with measure_stage("rollback"):
+                    self._raw.rollback()
         except _driver().Error:
             self._raw.close()
         finally:
@@ -579,30 +593,32 @@ def _reset_pool_connection(raw):
     LOCAL still chooses the schema for every individual transaction.
     """
     driver = _driver()
-    try:
-        raw.autocommit = True
-        raw.read_only = None
-        raw.isolation_level = None
-        raw.deferrable = None
-        raw.prepare_threshold = None
-        raw.row_factory = _row_factory
-        raw.execute("DISCARD ALL")
-        raw._roly_released_at = monotonic()
-    except driver.Error:
-        raise driver.OperationalError("저장소 연결을 정리하지 못했습니다.") from None
+    with measure_background("pool_reset"):
+        try:
+            raw.autocommit = True
+            raw.read_only = None
+            raw.isolation_level = None
+            raw.deferrable = None
+            raw.prepare_threshold = None
+            raw.row_factory = _row_factory
+            raw.execute("DISCARD ALL")
+            raw._roly_released_at = monotonic()
+        except driver.Error:
+            raise driver.OperationalError("저장소 연결을 정리하지 못했습니다.") from None
 
 
 def _check_pool_connection(raw):
     """Check long-idle sockets without an extra network query on every poll."""
     driver = _driver()
-    try:
-        if raw.closed:
-            raise driver.OperationalError("저장소 연결이 종료되었습니다.")
-        released = getattr(raw, "_roly_released_at", None)
-        if released is not None and monotonic() - released >= 30:
-            raw.execute("SELECT 1")
-    except driver.Error:
-        raise driver.OperationalError("저장소 연결을 다시 준비하고 있습니다.") from None
+    with measure_background("pool_check"):
+        try:
+            if raw.closed:
+                raise driver.OperationalError("저장소 연결이 종료되었습니다.")
+            released = getattr(raw, "_roly_released_at", None)
+            if released is not None and monotonic() - released >= 30:
+                raw.execute("SELECT 1")
+        except driver.Error:
+            raise driver.OperationalError("저장소 연결을 다시 준비하고 있습니다.") from None
 
 
 def _connection_pool(kwargs):
@@ -651,7 +667,9 @@ def connect(schema="rolymoly"):
     kwargs.update(autocommit=True, row_factory=_row_factory)
     try:
         pool = _connection_pool(kwargs)
-        return PostgresConnection(schema, pool.getconn(), pool=pool)
+        with measure_stage("pool_checkout"):
+            raw = pool.getconn()
+        return PostgresConnection(schema, raw, pool=pool)
     except psycopg.Error as error:
         raise _database_error(error) from None
 
@@ -718,7 +736,7 @@ def initialize(schema="rolymoly"):
                 raise ValueError("저장소 버전이 앱보다 최신입니다. 앱을 업데이트해 주세요.")
             if version == SCHEMA_VERSION:
                 return
-            if version not in (0, 1, 2, 3, 4, 5, 6):
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7):
                 raise ValueError("지원하지 않는 저장소 마이그레이션 버전입니다.")
             stamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")
             if version == 0:
@@ -752,6 +770,8 @@ def initialize(schema="rolymoly"):
                 connection.execute("INSERT INTO _schema_migrations(version,applied_at) VALUES(6,?)", (stamp,))
             from .member_ranks import initialize_ranks
             initialize_ranks(connection, postgres=True)
+            from .auction_state import initialize_changes
+            initialize_changes(connection, postgres=True)
             raw.execute(psycopg.sql.SQL("REVOKE ALL ON SCHEMA {} FROM PUBLIC").format(psycopg.sql.Identifier(schema)))
             raw.execute(psycopg.sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA {} FROM PUBLIC").format(psycopg.sql.Identifier(schema)))
             raw.execute(psycopg.sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA {} FROM PUBLIC").format(psycopg.sql.Identifier(schema)))

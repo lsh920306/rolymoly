@@ -455,11 +455,19 @@ export default function({parentElement,data}) {
     return views?.[data.kind] || null;
   };
   const cached=context ? select(view._rolyAuctionViews?.get(context)) : null;
-  let cleanup=renderAuctionView({parentElement,data:cached || data});
+  let cleanup=null;
+  const clear=()=>{
+    cleanup?.();cleanup=null;
+    const root=parentElement.querySelector('.auction-component');
+    if(root){root.replaceChildren();delete root.dataset.staticSignature;}
+  };
+  if(context && view._rolyAuctionViews?.has(context) && view._rolyAuctionViews.get(context)===null)clear();
+  else cleanup=renderAuctionView({parentElement,data:cached || data});
   if(!context)return cleanup;
   let disposed=false;
   const update=event=>{
     if(disposed || !parentElement.isConnected || event.detail?.context!==context)return;
+    if(event.detail.views===null){clear();return;}
     const next=select(event.detail.views);
     if(next)cleanup=renderAuctionView({parentElement,data:next});
   };
@@ -692,16 +700,22 @@ def live_companion_data(state, actor):
     member_id = actor.get("member_id") if actor else None
     cards = {str(team["id"]): team_data(team, member_id=member_id, index=index)
              for index, team in enumerate(teams)}
+    return {"event_status": state.get("event", {}).get("status"),
+            "queue": queue_data(state), "remaining": remaining_data(state), "teams": cards,
+            "overview": {"kind": "overview", "teams": list(cards.values())},
+            **bid_history_data(state)}
+
+
+def bid_history_data(state):
+    """Format only the bounded hot history; never rebuild roster/profile cards."""
+    teams = state.get("teams", [])
     cancelled = {lot["id"] for lot in state.get("lots", []) if lot["status"] == "CANCELLED"}
     bids = [bid for bid in state.get("bids", []) if bid["lot_id"] not in cancelled][:30]
     names = {team["id"]: team["name"] for team in teams}
     def stamp(value):
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         return parsed.astimezone(ZoneInfo("Asia/Seoul")).strftime("%H:%M:%S")
-    return {"event_status": state.get("event", {}).get("status"),
-            "queue": queue_data(state), "remaining": remaining_data(state), "teams": cards,
-            "overview": {"kind": "overview", "teams": list(cards.values())},
-            "sound": {"kind": "sound", "event_id": state.get("event_id"), "bid_id": bids[0]["id"] if bids else None},
+    return {"sound": {"kind": "sound", "event_id": state.get("event_id"), "bid_id": bids[0]["id"] if bids else None},
             "history": {"kind": "history", "bids": [
                 {"id": bid["id"], "amount": f"{bid['amount']:,} P", "time": stamp(bid["created_at"]),
                  "team": bid.get("team_name") or names.get(bid["team_id"], ""), "captain": bid.get("riot_id", "")}
