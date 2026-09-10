@@ -44,7 +44,18 @@ const validCommand = value => value && typeof value.request_id === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.request_id) &&
   integer(value.lot_id) && integer(value.amount);
 
-export function createLiveChannel({context, now, uuid, emit, readPending, writePending,pollInterval=500,independentReads=false,readsAllowed=()=>true}) {
+export function safeAuctionTimings(value) {
+  const result={};
+  for(const name of ['dispatch','pool_checkout','writer_begin','read_begin','read_pipeline','write_pipeline','bid_commit_pipeline','statement','commit','rollback']) {
+    const row=value?.[name];
+    if(row && integer(row.count) && row.count<=1000000 && finite(row.elapsed_ms) && row.elapsed_ms>=0 && row.elapsed_ms<=86400000 &&
+      integer(row.errors) && row.errors<=row.count) result[name]={count:row.count,elapsed_ms:row.elapsed_ms,errors:row.errors};
+  }
+  return result;
+}
+
+export function createLiveChannel({context, now, uuid, emit, readPending, writePending,pollInterval=500,independentReads=false,readsAllowed=()=>true,observe=()=>{}}) {
+  const report=(type,value,at=now())=>{try{observe(type,value,at);}catch(_){}};
   let restored = null;
   try { restored = readPending(); } catch (_) {}
   const channel = {
@@ -52,7 +63,7 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
     sent:new Map(), lastReplySeq:0, lastContact:now(), nextAt:now(), timeouts:0,
     bestClock:null, message:'', messageStatus:'', messageLot:null, lastFrame:null,resolved:new Set(),metrics:{},
     commandTiming:null,lastCommandTiming:null,commandRoundTripMs:null,
-    writeOutstanding:null,writeTimeouts:0,commandMetrics:null,
+    writeOutstanding:null,writeTimeouts:0,commandMetrics:null,lastAcknowledgement:null,
     confirmAt:null,
     save() { try { writePending(this.pending); } catch (_) {} },
     streamRequest() {
@@ -71,14 +82,20 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
       this.sent.set(request.seq,request);
       while(this.sent.size>32) this.sent.delete(this.sent.keys().next().value);
       emit(request);
+      if(request.command)report('attempt',{...request.command,attempts:this.commandTiming?.attempts,
+        restored:!this.commandTiming,sent_at_ms:request.sent_ms});
       return request;
     },
-    submit(lot_id,amount) {
+    submit(lot_id,amount,clickedAt=null) {
       if(this.pending || !integer(lot_id) || !integer(amount)) return null;
       this.pending={request_id:uuid(),lot_id,amount};
-      this.commandTiming={request_id:this.pending.request_id,lot_id,started:now(),attempts:0};
+      this.commandTiming={request_id:this.pending.request_id,lot_id,amount,started:now(),attempts:0,
+        click_at_ms:finite(clickedAt) && clickedAt<=now()?clickedAt:null};
       this.timeouts=0;this.writeTimeouts=0;this.confirmAt=null;
       this.message='';this.messageStatus='';this.save();
+      report(finite(this.commandTiming.click_at_ms)?'input':'command',{...this.pending,
+        command_at_ms:this.commandTiming.started,click_at_ms:this.commandTiming.click_at_ms},
+        this.commandTiming.click_at_ms ?? this.commandTiming.started);
       // A user command takes priority over an outstanding read. It remains in
       // every following envelope until its own durable receipt is acknowledged.
       return this.send(true);
@@ -95,6 +112,13 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
       if(this.pending && ack && ack.request_id===this.pending.request_id &&
          ack.lot_id===this.pending.lot_id && ack.amount===this.pending.amount) {
         if(ack.status==='accepted' || ack.status==='rejected') {
+          const received=now(),timing=this.commandTiming;
+          this.lastAcknowledgement={request_id:ack.request_id,lot_id:ack.lot_id,amount:ack.amount,status:ack.status,
+            at_ms:received,attempts:timing?.attempts,click_at_ms:timing?.click_at_ms,
+            command_elapsed_ms:timing?Math.max(0,received-timing.started):null,
+            click_elapsed_ms:finite(timing?.click_at_ms)?Math.max(0,received-timing.click_at_ms):null};
+          report('ack',{...this.lastAcknowledgement,server_elapsed_ms:transport.server_elapsed_ms,
+            callback_elapsed_ms:transport.callback_elapsed_ms,timings:safeAuctionTimings(transport.timings)},received);
           if(this.commandTiming?.request_id===ack.request_id) {
             this.lastCommandTiming={...this.commandTiming,status:ack.status,elapsed_ms:Math.max(0,now()-this.commandTiming.started)};
             // Learn only the original command's elapsed time. A retry's short
@@ -108,6 +132,7 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
           while(this.resolved.size>32)this.resolved.delete(this.resolved.values().next().value);
           this.pending=null;this.save();
         } else if(ack.status==='pending') {
+          report('ack_pending',{request_id:ack.request_id,lot_id:ack.lot_id,amount:ack.amount,status:'pending'});
           this.message=String(ack.message || '입찰 접수를 확인하고 있습니다.').slice(0,500);
           this.messageStatus='';
         }
@@ -154,10 +179,18 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
       const original=request?.epoch===this.epoch ? this.sent.get(request.seq) : null;
       // A receipt is not a snapshot or a clock sample. Never refresh the
       // displayed player's freshness simply because a write has finished.
-      this.receive({context:transport?.context,ack:transport?.ack},null);
-      if(original && original.sent_ms===request.sent_ms) {
-        this.commandMetrics={round_trip_ms:Math.max(0,now()-original.sent_ms),
-          server_elapsed_ms:transport.server_elapsed_ms,callback_elapsed_ms:transport.callback_elapsed_ms};
+      this.receive({context:transport?.context,ack:transport?.ack,server_elapsed_ms:transport?.server_elapsed_ms,
+        callback_elapsed_ms:transport?.callback_elapsed_ms,timings:transport?.timings},null);
+      const acknowledged=transport?.ack;
+      const sameCommand=original?.command && ['request_id','lot_id','amount'].every(key=>original.command[key]===acknowledged?.[key]);
+      if(transport?.context===this.context && sameCommand && original.sent_ms===request.sent_ms) {
+        // A confirmation may finish after the original accepted ACK. Its
+        // shorter lookup must not replace the metrics of that committed bid.
+        if(id && acknowledged.request_id===id)this.commandMetrics={request_id:acknowledged.request_id,
+          round_trip_ms:Math.max(0,now()-original.sent_ms),
+          server_elapsed_ms:finite(transport.server_elapsed_ms)?Math.max(0,transport.server_elapsed_ms):null,
+          callback_elapsed_ms:finite(transport.callback_elapsed_ms)?Math.max(0,transport.callback_elapsed_ms):null,
+          timings:safeAuctionTimings(transport.timings)};
         this.sent.delete(request.seq);
       }
       // An ACK is independent of a slow spectator snapshot. A late ACK for
@@ -229,6 +262,73 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
 }
 """
 
+DIAGNOSTICS_JS = r"""
+// Bounded, secret-free DOM evidence. Timestamps mark DOM/ACK processing, not
+// painted pixels. Rows serialize once, after the input/ACK handler returns.
+export function createAuctionDiagnostics({now,timeOrigin=()=>null,visible=()=>true,
+  schedule=callback=>Promise.resolve().then(callback),limit=256,ttlMs=300000}) {
+  limit=integer(limit)?Math.max(1,Math.min(256,limit)):256;
+  ttlMs=finite(ttlMs)?Math.max(1000,Math.min(300000,ttlMs)):300000;
+  const types=new Set(['input','command','input_blocked','attempt','ack','ack_pending','pending_dom','ack_dom','state_dom','connection']);
+  const statuses=new Set(['READY','RUNNING','WAITING','PAUSED','COMPLETED','CANCELLED','accepted','rejected','pending']);
+  const rows=[];let root=null,container=null,queued=false,dead=false,sequence=0,dropped=0,expired=0,nextExpiry=0;
+  function metadata() {
+    if(!container)return;
+    Object.assign(container.dataset,{schemaVersion:'1',clock:'performance.now',observation:'dom-not-paint',
+      timeOriginMs:finite(timeOrigin())?String(timeOrigin()):'',limit:String(limit),ttlMs:String(ttlMs),
+      lastSequence:String(sequence),retained:String(rows.length),dropped:String(dropped),expired:String(expired)});
+  }
+  function expire(force=false) {
+    if(dead || (!force && now()<nextExpiry))return;
+    nextExpiry=now()+1000;
+    let changed=false;
+    while(rows.length && rows[0].event.at_ms<now()-ttlMs){rows.shift().node?.remove();expired++;changed=true;}
+    if(changed)metadata();
+  }
+  function flush() {
+    queued=false;if(dead || !container)return;
+    expire(true);
+    for(const row of rows)if(!row.node){
+      const node=root.ownerDocument.createElement('span');node.className='auction-diagnostic-event';
+      node.dataset.sequence=String(row.event.sequence);node.textContent=JSON.stringify(row.event);
+      container.append(node);row.node=node;
+    }
+    metadata();
+  }
+  function requestFlush(){if(!queued && !dead){queued=true;schedule(flush);}}
+  return {
+    mount(target) {
+      if(dead || root===target)return;
+      container?.remove();target.querySelector('.auction-diagnostics')?.remove();root=target;
+      container=root.ownerDocument.createElement('div');container.className='auction-diagnostics';
+      container.hidden=true;container.setAttribute('aria-hidden','true');root.append(container);
+      for(const row of rows)row.node=null;
+      metadata();requestFlush();
+    },
+    record(type,value={},at=now()) {
+      if(dead || !types.has(type) || !finite(at) || at<0 || at>now())return;
+      const event={sequence:++sequence,type,at_ms:at,visible:Boolean(visible())};
+      for(const key of ['event_id','lot_id','display_lot_id','bid_id','revision','amount','attempts'])
+        if(integer(value[key]))event[key]=value[key];
+      for(const key of ['deadline','click_at_ms','command_at_ms','sent_at_ms','command_elapsed_ms','click_elapsed_ms','server_elapsed_ms','callback_elapsed_ms'])
+        if(finite(value[key]) && value[key]>=0)event[key]=value[key];
+      for(const key of ['restored','price_matches','matches','available','clock_stale'])
+        if(typeof value[key]==='boolean')event[key]=value[key];
+      if(typeof value.request_id==='string' && validCommand({request_id:value.request_id,lot_id:0,amount:0}))event.request_id=value.request_id;
+      if(statuses.has(value.status))event.status=value.status;
+      if(['websocket','http','streamlit','connecting'].includes(value.mode))event.mode=value.mode;
+      if(['button','keyboard'].includes(value.input_source))event.input_source=value.input_source;
+      if(value.timings){const timings=safeAuctionTimings(value.timings);if(Object.keys(timings).length)event.timings=timings;}
+      expire(true);rows.push({event,node:null});
+      while(rows.length>limit){rows.shift().node?.remove();dropped++;}
+      requestFlush();
+    },
+    expire,
+    dispose(){dead=true;rows.length=0;container?.remove();container=null;root=null;},
+  };
+}
+"""
+
 PANEL_JS = r"""
 export default function renderLivePanel({parentElement,data,setTriggerValue,httpFrame=false,pushFrame=false}) {
   const root=parentElement.querySelector('.live-panel');
@@ -242,11 +342,17 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
   old?.dispose?.();
   const sameServer=!data.direct || !old?.direct || old.direct.epoch===data.direct.epoch;
   const memory=old && old.context===context && sameServer ? old : {context,draft:0,draftLot:null,edited:false,stage:null,control:null};
-  if(old && old!==memory){old.mounted=false;old.delivery?.dispose?.();}
+  if(old && old!==memory){old.mounted=false;old.delivery?.dispose?.();old.diagnostics?.dispose();}
   parentElement._rolyLivePanel=memory;
   if(!httpFrame)memory.frameworkGeneration=(memory.frameworkGeneration || 0)+1;
   const frameworkGeneration=memory.frameworkGeneration;
   memory.mounted=true;
+  if(!httpFrame)memory.diagnosticsEnabled=data.diagnostics!==false;
+  if(memory.diagnosticsEnabled && !memory.diagnostics)memory.diagnostics=createAuctionDiagnostics({now,
+    timeOrigin:()=>view.performance.timeOrigin,visible:()=>doc.visibilityState!=='hidden'});
+  if(!memory.diagnosticsEnabled && memory.diagnostics){memory.diagnostics.dispose();memory.diagnostics=null;}
+  memory.diagnostics?.mount(root);
+  memory.observe=(type,value,at)=>{try{memory.diagnostics?.record(type,value,at);}catch(_){}};
   const uuid=()=>view.crypto.randomUUID();
   memory.direct=data.direct || memory.direct || null;
   memory.trigger=setTriggerValue;
@@ -258,6 +364,7 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
   if(!memory.channel) {
     const storageKey='rolymoly.pending-bid.'+context;
     memory.channel= createLiveChannel({context,now,uuid,emit:request=>memory.emit('event',request),pollInterval:memory.direct?1000:500,independentReads:Boolean(memory.direct),
+      observe:(type,value,at)=>memory.observe(type,{event_id:memory.stage?.event_id ?? memory.direct?.event_id,...value},at),
       readsAllowed:()=>!memory.delivery?.streaming?.(),
       readPending:()=>JSON.parse(view.sessionStorage.getItem(storageKey) || 'null'),
       writePending:pending=>pending ? view.sessionStorage.setItem(storageKey,JSON.stringify(pending)) : view.sessionStorage.removeItem(storageKey)});
@@ -268,14 +375,14 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     const createDelivery=memory.direct.ws_url?createPushDelivery:createHttpDelivery;
     memory.delivery=createDelivery({config:memory.direct,context,now,
       socketFactory:url=>new view.WebSocket(url),makeRequest:()=>live.streamRequest(),
-      onMode:mode=>{memory.deliveryMode=mode;memory.refresh?.();},
+      onMode:mode=>{if(memory.deliveryMode!==mode)memory.observe('connection',{mode});memory.deliveryMode=mode;memory.refresh?.();},
       onClock:frame=>{if(active()){live.receivePong(frame.sent_ms,frame.server_now,frame.server_elapsed_ms);memory.connectionMessage='';memory.refresh?.();}},
       fetcher:(url,options)=>view.fetch(url,options),
       readToken:()=>view.sessionStorage.getItem(memory.direct.storage_key),
       onAck:result=>{
         if(!active())return;
         live.receiveAck({context,request:result.request,ack:result.ack,
-          server_elapsed_ms:result.server_elapsed_ms,callback_elapsed_ms:result.callback_elapsed_ms});
+          server_elapsed_ms:result.server_elapsed_ms,callback_elapsed_ms:result.callback_elapsed_ms,timings:result.timings});
         memory.refresh?.();
       },
       onFrame:(panel,source)=>{
@@ -436,6 +543,24 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     root.dataset.clientTimeOriginMs=String(view.performance.timeOrigin ?? '');
     root.dataset.deliveryMode=memory.direct?(memory.deliveryMode || 'http'):'streamlit';
     root.dataset.stateRevision=String(memory.revision ?? '');
+    // Only transitions add rows. Tick updates the clock but never serializes
+    // the diagnostic buffer or repeats an ACK/pending observation.
+    const pending=live.pending;
+    if(pending && memory.observedPending!==pending.request_id && nodes.submit.disabled && nodes.submit.textContent==='입찰 확인 중…') {
+      memory.observedPending=pending.request_id;
+      memory.observe('pending_dom',{...pending,display_lot_id:memory.lot?.id,
+        event_id:memory.stage?.event_id ?? memory.direct?.event_id,
+        click_elapsed_ms:finite(live.commandTiming?.click_at_ms)?now()-live.commandTiming.click_at_ms:null,
+        matches:pending.lot_id===memory.lot?.id});
+    }
+    const ack=live.lastAcknowledgement;
+    if(ack && memory.observedAck!==ack.request_id && !pending && ack.lot_id===memory.lot?.id &&
+      live.messageLot===ack.lot_id && kind===(ack.status==='accepted'?'success':'error') && nodes.feedback.textContent===live.message) {
+      memory.observedAck=ack.request_id;
+      memory.observe('ack_dom',{...ack,display_lot_id:memory.lot.id,event_id:memory.stage?.event_id ?? memory.direct?.event_id,
+        click_elapsed_ms:finite(ack.click_at_ms)?now()-ack.click_at_ms:null,matches:true});
+    }
+    memory.diagnostics?.expire();
   }
   memory.refresh=refresh;
   const recordDraftChange=started=>{memory.draftChangeMs=now()-started;root.dataset.clientDraftChangeMs=String(memory.draftChangeMs);};
@@ -450,12 +575,27 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     const value=base+Number(button.dataset.increment);if(integer(value))setDraft(value);
   };
   nodes.reset.onclick=()=>{if(allowEdit())setDraft(Number(memory.lot?.highest_bid || 0));};
-  nodes.submit.onclick=()=>{if(allowEdit() && validAmount()){live.submit(memory.lot.id,memory.draft);refresh();}};
-  nodes.input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();nodes.submit.onclick();}};
+  const submitIntent=source=>{
+    const clickedAt=now();
+    if(allowEdit() && validAmount()){live.submit(memory.lot.id,memory.draft,clickedAt);refresh();}
+    else memory.observe('input_blocked',{event_id:memory.stage?.event_id,lot_id:memory.lot?.id,amount:memory.draft,input_source:source},clickedAt);
+  };
+  nodes.submit.onclick=()=>submitIntent('button');
+  nodes.input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();submitIntent('keyboard');}};
   const tick=()=>{if(parentElement.isConnected){memory.delivery?.tick?.();live.pump(doc.visibilityState!=='hidden');refresh();}};
   const onReturn=()=>{if(doc.visibilityState!=='hidden'){live.nextAt=now();tick();}};
   doc.addEventListener('visibilitychange',onReturn);view.addEventListener('focus',onReturn);view.addEventListener('pageshow',onReturn);
   tick();const interval=view.setInterval(tick,100);
+  if(incoming.fresh) {
+    const signature=JSON.stringify([memory.stateAvailable,memory.status,memory.lot?.id,memory.lot?.highest_bid,stage?.bid_id,stage?.deadline,memory.revision]);
+    if(signature!==memory.observedState){
+      memory.observedState=signature;
+      memory.observe('state_dom',{event_id:stage?.event_id ?? memory.direct?.event_id,lot_id:memory.lot?.id,
+        bid_id:stage?.bid_id,revision:memory.revision,amount:memory.lot?.highest_bid,deadline:stage?.deadline,
+        status:memory.status,available:Boolean(memory.stateAvailable),mode:memory.direct?(memory.deliveryMode || 'http'):'streamlit',
+        clock_stale:live.stale(),price_matches:Boolean(stage && stageMount.querySelector('.bid-price')?.textContent===stage.price)});
+    }
+  }
   const stageDispose=memory.stageDispose;
   let disposed=false;
   const dispose=()=>{
@@ -478,12 +618,12 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     memory.mounted=false;memory.dispose?.();
     // Framework cleanup also runs immediately before a synchronous rerender.
     // Release the transport only if no replacement mounted in this microtask.
-    Promise.resolve().then(()=>{if(!memory.mounted){memory.delivery?.dispose?.();memory.delivery=null;}});
+    Promise.resolve().then(()=>{if(!memory.mounted){memory.delivery?.dispose?.();memory.delivery=null;memory.diagnostics?.dispose();memory.diagnostics=null;}});
   };
 }
 """
 
-JS = STAGE_JS.replace("export default function(", "function renderAuctionStage(", 1) + CHANNEL_JS + HTTP_JS + PUSH_JS + PANEL_JS
+JS = STAGE_JS.replace("export default function(", "function renderAuctionStage(", 1) + CHANNEL_JS + DIAGNOSTICS_JS + HTTP_JS + PUSH_JS + PANEL_JS
 COMPONENT_REVISION = sha256((HTML + "\0" + CSS + "\0" + JS).encode()).hexdigest()[:16]
 
 
@@ -511,9 +651,10 @@ def _register(scope, revision):
     return st.components.v2.component("auction_live_panel_" + revision, html=HTML, css=CSS, js=JS, isolate_styles=True)
 
 
-def render_live_panel(state, *, key, control=None, transport, on_event_change, direct=None):
+def render_live_panel(state, *, key, control=None, transport, on_event_change, direct=None, diagnostics=True):
     st.session_state.setdefault("_auction_live_panel_scope", uuid4().hex)
     return _register(st.session_state["_auction_live_panel_scope"], COMPONENT_REVISION)(
-        data={**live_panel_data(state, control=control, transport=transport), **({"direct": direct} if direct else {})}, key=key,
+        data={**live_panel_data(state, control=control, transport=transport), **({"direct": direct} if direct else {}),
+              **({"diagnostics": False} if diagnostics is False else {})}, key=key,
         height="content", width="stretch", on_event_change=on_event_change,
     )
