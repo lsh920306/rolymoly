@@ -15,7 +15,7 @@ from anyio import to_thread
 from starlette.websockets import WebSocketDisconnect
 
 
-def presentation(state, actor, context, *, request=None, elapsed_ms=0, views=None):
+def presentation(state, actor, context, *, request=None, elapsed_ms=0, views=None, stage=None):
     from .auction_live_panel import live_panel_data
     display = state
     lot = state.get("current_lot") if state else None
@@ -31,7 +31,7 @@ def presentation(state, actor, context, *, request=None, elapsed_ms=0, views=Non
                    and len(own["players"]) < 5}
     panel = live_panel_data(display, control=control, transport={"context": context,
         "frame_id": None, "request": request, "server_elapsed_ms": elapsed_ms,
-        "view_elapsed_ms": elapsed_ms, "snapshot_elapsed_ms": 0, "callback_elapsed_ms": 0, "ack": None})
+        "view_elapsed_ms": elapsed_ms, "snapshot_elapsed_ms": 0, "callback_elapsed_ms": 0, "ack": None}, stage=stage)
     if state is None:
         panel["views"] = None
     elif views is not None:
@@ -255,7 +255,12 @@ class AuctionHub:
                         self.stats["hot_states"] += 1
                     if room.state and room.state["status"] in ("RUNNING", "WAITING", "PAUSED"):
                         room.live.ensure_worker()
-                    state = self._fresh_state(room)
+                    # A periodic authorization/version probe often has no frame
+                    # to send. Delay copying the roster/profile graph until an
+                    # authorized viewer actually needs a presentation.
+                    state = None
+                    stage = None
+                    prepared = False
                     for member in members:
                         if member.key not in room.members:
                             continue
@@ -266,14 +271,24 @@ class AuctionHub:
                             continue
                         actor_changed = member.actor != actor
                         member.actor = actor
+                        prepare_bid_context = getattr(self.runtime, "prepare_bid_context", None)
+                        if prepare_bid_context is not None:
+                            prepare_bid_context(member.context, actor, room.state)
                         first = not member.initialized
                         initial = first or (actor_changed and not changed)
                         if not (first or changed or actor_changed):
                             continue
+                        if not prepared:
+                            state = self._fresh_state(room)
+                            # Public stage is identical for this snapshot. Only
+                            # controls, transport and team highlighting vary by
+                            # viewer; never reuse these across authorization.
+                            stage = presentation(state, {}, "")["stage"]
+                            prepared = True
                         views = room.views if first or actor_changed else changed_views
                         views = self._personal_views(views, state, actor)
                         panel = presentation(state, actor, member.context, request=member.request if initial else None,
-                            elapsed_ms=max(0, (monotonic()-member.joined)*1000) if initial else 0, views=views)
+                            elapsed_ms=max(0, (monotonic()-member.joined)*1000) if initial else 0, views=views, stage=stage)
                         panel["transport"].update(revision=room.revision, detail_revision=room.detail_revision)
                         frame = {"type": "snapshot" if initial else "state", "epoch": self.runtime.epoch,
                             "context": member.context, "revision": room.revision, "detail_revision": room.detail_revision,

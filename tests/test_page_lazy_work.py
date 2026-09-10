@@ -73,9 +73,11 @@ class LazyPageTests(unittest.TestCase):
     def test_admin_policy_history_reads_only_when_open(self):
         app = self.app("admin")
         app.session_state.admin_active_tab = "점수 정책"
-        with patch.object(Core, "policy_history", side_effect=AssertionError("closed policy history")):
+        with patch.object(Core, "policy_history", side_effect=AssertionError("closed policy history")), \
+             patch.object(Core, "policy", autospec=True, side_effect=Core.policy) as policy:
             app.run()
             self.clean(app)
+            policy.assert_called_once()
         app.session_state.admin_policy_history = True
         with patch.object(Core, "policy_history", return_value=[]) as query:
             app.run()

@@ -175,7 +175,6 @@ def captain_dialog(service, token, event_id):
     draft["selected"] = list(dict.fromkeys(member for member in draft["selected"] if member in player_map))[:event["team_count"]]
     selected = draft["selected"]
     from roly.riot_profile import member_profiles
-    profiles = member_profiles(service.core, player_map)
     with st.container(key="t_captain_picker", gap="small"):
         with st.container(horizontal=True, wrap=False, vertical_alignment="center", gap="small", key="t_captain_header"):
             st.html(f'<div class="captain-count">선택한 팀장 <strong>{len(selected)}/{event["team_count"]}</strong></div>')
@@ -184,6 +183,7 @@ def captain_dialog(service, token, event_id):
         st.caption("선택한 순서대로 팀을 구성합니다.")
         with st.container(height=340, border=False, gap="xsmall", key="t_captain_list"):
             visible = [player for player in player_map.values() if query in player["riot_id"].casefold()]
+            profiles = member_profiles(service.core, [player["member_id"] for player in visible])
             if not visible:
                 st.caption("검색 결과가 없습니다. 선택한 팀장은 유지됩니다.")
             for player in visible:

@@ -96,6 +96,42 @@ class AuctionHTTPTests(unittest.TestCase):
         for secret in (self.tokens[0], self.core.db_path, "fingerprint", "token_hash"):
             self.assertNotIn(secret, encoded)
 
+    def test_verified_captain_view_prepares_first_bid_without_pre_read(self):
+        lot = self.start(bid_seconds=10)
+        view = self.runtime.live(self.tokens[0], self.event, self.envelope())
+        self.assertIn(view["context"], self.runtime.prepared_contexts)
+        self.assertFalse(self.runtime.contexts)
+        body = self.envelope(lot)
+        with patch.object(self.runtime, "_actor", side_effect=AssertionError("duplicate pre-read")):
+            status, value, _ = self.request(body)
+        self.assertEqual((status, value["ack"]["status"], self.count_bids()), (200, "accepted", 1))
+        with patch.object(self.runtime, "_actor", wraps=self.runtime._actor) as actor:
+            self.assertEqual(self.request(body)[1]["ack"]["status"], "accepted")
+            self.assertEqual(actor.call_count, 1)
+        self.assertEqual(self.count_bids(), 1)
+
+    def test_prepared_view_never_authorizes_a_revoked_session(self):
+        lot = self.start(bid_seconds=10)
+        self.runtime.live(self.tokens[0], self.event, self.envelope())
+        self.core.logout(self.tokens[0])
+        with patch.object(self.runtime, "_actor", side_effect=AssertionError("pre-read should be prepared")):
+            status, value, _ = self.request(self.envelope(lot))
+        self.assertEqual((status, value["ack"]["status"], self.count_bids()), (200, "rejected", 0))
+
+    def test_preparation_is_bounded_and_expiry_restores_fresh_pre_read(self):
+        lot = self.start(bid_seconds=10)
+        self.runtime.max_contexts = 2
+        actor, state = self.live.get_view(self.tokens[0], self.event)
+        with patch.object(http, "monotonic", return_value=10):
+            for i in range(10):
+                self.runtime.prepare_bid_context(str(i), actor, state)
+            self.runtime.live(self.tokens[0], self.event, self.envelope())
+        self.assertEqual(len(self.runtime.prepared_contexts), 2)
+        self.assertFalse(self.runtime.contexts)
+        with patch.object(http, "monotonic", return_value=100), patch.object(self.runtime, "_actor", wraps=self.runtime._actor) as fresh:
+            self.assertEqual(self.request(self.envelope(lot))[1]["ack"]["status"], "accepted")
+            self.assertEqual(fresh.call_count, 1)
+
     def test_prefixed_asgi_read_and_bid_share_runtime_without_root_or_double_prefix(self):
         self.app = Starlette(routes=http.routes(base_url="/~/+/"))
         lot = self.start()

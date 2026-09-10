@@ -125,7 +125,10 @@ class EventsUITests(unittest.TestCase):
         self.choose(event_id)
         self.details("명단")
         self.at.session_state[f"events_roster_editor_{event_id}"] = True
-        self.at.run()
+        with patch.object(Core, "list_members", autospec=True, side_effect=Core.list_members) as loaded:
+            self.at.run()
+        self.assertEqual(loaded.call_count, 1)
+        self.assertEqual(loaded.call_args.kwargs, {"include_pending": True})
         original = self.comp.get_event(event_id)
         base_key = f"events_roster_base_{event_id}_{self.core.session(self.token)['id']}"
         first, second = [p for p in original["players"] if p["role"] == "TOP"][:2]

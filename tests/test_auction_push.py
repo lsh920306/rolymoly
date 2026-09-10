@@ -98,6 +98,83 @@ class AuctionPushTests(unittest.TestCase):
     async def frame(member):
         return await asyncio.wait_for(member.queue.get(), 2)
 
+    def test_shared_stage_formats_once_per_batch_without_duplicate_wire_profile(self):
+        from roly.auction_live_panel import stage_data
+        lot = self.start()
+
+        async def run():
+            gate = asyncio.Event()
+
+            class GatedHub(AuctionHub):
+                async def _run(self, room):
+                    await gate.wait()
+                    await super()._run(room)
+
+            self.runtime.push = hub = GatedHub(self.runtime, scan_interval=60, listen=False)
+            try:
+                tokens = (self.tokens[0], self.tokens[1], self.player_token)
+                pairs = [await hub.subscribe(token, self.event, self.envelope(token=token)) for token in tokens]
+                with patch("roly.auction_live_panel.stage_data", wraps=stage_data) as formatted:
+                    gate.set()
+                    frames = await asyncio.gather(*(self.frame(member) for _, member in pairs))
+                    self.assertEqual(formatted.call_count, 1)
+                    first_stage = frames[0]["panel"]["stage"]
+                    self.assertTrue(all(frame["panel"]["stage"] == first_stage for frame in frames))
+                    for frame, (_, member) in zip(frames, pairs):
+                        panel = frame["panel"]
+                        self.assertNotIn("player", panel)
+                        self.assertEqual(panel["stage"]["player"], first_stage["player"])
+                        self.assertEqual(panel["transport"]["context"], member.context)
+                        if panel["control"]:
+                            self.assertEqual(panel["control"]["context"], member.context)
+                        compact = len(json.dumps(panel, ensure_ascii=False).encode())
+                        duplicated = len(json.dumps({**panel["stage"], **panel}, ensure_ascii=False).encode())
+                        self.assertLess(compact, duplicated)
+                    self.assertIsNone(frames[2]["panel"]["control"])
+                    self.assertNotEqual(frames[0]["panel"]["control"]["team_name"], frames[1]["panel"]["control"]["team_name"])
+                    self.assertIsNot(frames[0]["panel"]["transport"], frames[1]["panel"]["transport"])
+
+                    self.live.place_bid(self.tokens[0], self.event, lot["id"], 10, str(uuid4()))
+                    hub.notify(self.event)
+                    updates = await asyncio.gather(*(self.frame(member) for _, member in pairs))
+                    self.assertEqual(formatted.call_count, 2)
+                    for old, update in zip(frames, updates):
+                        self.assertGreater(update["revision"], old["revision"])
+                        self.assertEqual(update["panel"]["lot"]["highest_bid"], 10)
+                        self.assertEqual(update["panel"]["stage"]["price"], "최고 입찰 10 P")
+                        self.assertEqual(update["panel"]["stage"]["player"], first_stage["player"])
+            finally:
+                gate.set()
+                await hub.close()
+
+        asyncio.run(run())
+
+    def test_unchanged_probe_and_revocation_do_not_copy_or_format_display(self):
+        self.start()
+
+        async def exercise(hub):
+            room, member = await hub.subscribe(self.player_token, self.event, self.envelope(token=self.player_token))
+            await self.frame(member)
+            with patch.object(hub, "_fresh_state", side_effect=AssertionError("unchanged/auth-only read copied display")), \
+                    patch("roly.auction_live_panel.stage_data", side_effect=AssertionError("unchanged/auth-only read formatted stage")):
+                prior_reads = hub.stats["reads"]
+                hub.notify(self.event)
+
+                async def wait_for_read():
+                    while hub.stats["reads"] == prior_reads:
+                        await asyncio.sleep(.001)
+
+                await asyncio.wait_for(wait_for_read(), 2)
+                self.assertTrue(member.queue.empty())
+                self.core.logout(self.player_token)
+                hub.notify(self.event)
+                frame = await self.frame(member)
+                self.assertEqual(frame["error"]["code"], "session_expired")
+                self.assertNotIn("panel", frame)
+                self.assertIsNone(member.actor)
+
+        self.run_hub(exercise, scan_interval=60)
+
     def test_eighty_distinct_viewers_and_http_snapshot_share_one_initial_read(self):
         self.start()
         tokens = add_viewer_sessions(self.core, self.player_token, 80)

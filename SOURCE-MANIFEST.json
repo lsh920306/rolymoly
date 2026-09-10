@@ -100,16 +100,16 @@
     "sha256": "cda0e4e9e5b281fb99cc2592d092f73f9df3f3b073460fb090812ff0827f4068"
   },
   "app_pages/admin.py": {
-    "bytes": 26531,
-    "sha256": "8e894c897a6113af6956427b735879b064aa57eab9d471acc0b0e9b06fa7dbfe"
+    "bytes": 26520,
+    "sha256": "d16070862c7b272c285db0d3b1e71057bb26ec62a682b41f0912258cfa0df8e4"
   },
   "app_pages/auction.py": {
     "bytes": 16820,
     "sha256": "7c49abc6b66395136eb3bb307173de8ad8d05bb4760f19815528dcf9f3738daa"
   },
   "app_pages/events.py": {
-    "bytes": 41695,
-    "sha256": "3f166248122448f57613bd5b885a022d51afb4b9c1cbe14e8c5f96b6fc88cf6a"
+    "bytes": 41857,
+    "sha256": "0a42a0d5b0892125b2d7edcf25cbec2cf6fa74eaef030d275e4a532752ba5099"
   },
   "app_pages/home.py": {
     "bytes": 10982,
@@ -124,8 +124,8 @@
     "sha256": "499dd2315f819944e5cfed6e64b49acdf9d0f905f0389b6cc261f98dd91b0e67"
   },
   "app_pages/normal.py": {
-    "bytes": 4120,
-    "sha256": "260f0cf355ea632df8cacb0646056a3d5a91563d891be114e5b9a8cb033f3f5e"
+    "bytes": 4210,
+    "sha256": "04f66e2da07fa68112e9e083d4ddf72d94a1b044d9470ac5db7ca9f33d130b70"
   },
   "app_pages/profile.py": {
     "bytes": 1187,
@@ -176,16 +176,16 @@
     "sha256": "bd13028620ea693839a84c6d1ecb35b4720697602ffc6675922de1dddda17e7d"
   },
   "roly/auction_http.py": {
-    "bytes": 20584,
-    "sha256": "d45d3192bfa07eed46c572809f5caa0bb88ca84bc6f8f3d90da0d1b0a4d10abe"
+    "bytes": 22067,
+    "sha256": "7c0b42157cf60f002127f4f26ef92a4297b0084b44b2adbeee8af9075842aaab"
   },
   "roly/auction_http_client.py": {
     "bytes": 12232,
     "sha256": "de9896b0bb985b8bfbeef11cc5749d1948a3b393484f5b53703264701b5a703e"
   },
   "roly/auction_live_panel.py": {
-    "bytes": 46866,
-    "sha256": "b5defe3de45b148048eb706abe4c9b8a2e4e25762cc8bbefe0d41dc5297a7242"
+    "bytes": 47117,
+    "sha256": "95e815df05cf442b0ffcfa3267f6d29698416e3e1fe78fa8daba75c59686f3d6"
   },
   "roly/auction_metrics.py": {
     "bytes": 2900,
@@ -196,8 +196,8 @@
     "sha256": "ee7c64ad427cef6ddb74ba2f55d1f41d5a2281f11ed7ee623f4d987e881b471c"
   },
   "roly/auction_push.py": {
-    "bytes": 20003,
-    "sha256": "58e44963d81dfa0580d9ae57223bb09d5e208cf5de6e245282c90271cacb26c0"
+    "bytes": 21018,
+    "sha256": "6f9bcbc055899cea17f7b6b7784646d7645225eef657c7b452bdd0dba78f2c68"
   },
   "roly/auction_shared.py": {
     "bytes": 5514,
@@ -224,12 +224,12 @@
     "sha256": "072e4bdd83a6888a2440d774cd265d6b83666d7d780f465576363e986fd9db4a"
   },
   "roly/competition.py": {
-    "bytes": 68558,
-    "sha256": "e48874c335d052f1433d9d6c24ace42601b0b527fa0ef888362b19ad861f2b39"
+    "bytes": 69734,
+    "sha256": "b07babd659dd769805d9881cd65c46526e8c78da556c8615e0203cea298da9dd"
   },
   "roly/core.py": {
-    "bytes": 67486,
-    "sha256": "61222129b802a3ed0de8fcd9106ac6215b8b5a1c229ed754ead533ae6e211133"
+    "bytes": 69615,
+    "sha256": "6091874430a142c93921bb0453dd3d54902c85302885972c4cc784a6d792db4a"
   },
   "roly/db_probe.py": {
     "bytes": 13736,
@@ -272,16 +272,16 @@
     "sha256": "47d3511f1e660d30e43d4682fb3dce3cf5d8ba6e8b5445c8e3632d5f083644d2"
   },
   "roly/member_profile_page.py": {
-    "bytes": 7594,
-    "sha256": "537fd73439bfa759939d25be68af13cf004575da6afc7e84c45e21ae15b7af68"
+    "bytes": 7607,
+    "sha256": "3116f2b3f342fd2a93f578839949a96bc0455333cfb01b78a5afabad472f871f"
   },
   "roly/member_ranks.py": {
     "bytes": 11308,
     "sha256": "74358873832cd9d6d9c1977c258c62d78545d8e0a3606eb54dacc4e60d20cc0e"
   },
   "roly/member_records.py": {
-    "bytes": 5914,
-    "sha256": "541c748ec34f92f938bdea92d2b3f629a3feaa2b611ca2bf29455aef36272852"
+    "bytes": 6748,
+    "sha256": "98008d5742dca4da41215dd59049bff712597f6754f960dd9de41cb345fa8c66"
   },
   "roly/postgres.py": {
     "bytes": 47013,
@@ -300,12 +300,12 @@
     "sha256": "0be6ca790594cacbc0f77bbbbc9282870639f1f31a04b0a3ee268ef547837b83"
   },
   "roly/riot_profile.py": {
-    "bytes": 4119,
-    "sha256": "96dc8138c34932971081c196b868dd0f395f45dad594c8a163093a5ad120f340"
+    "bytes": 4118,
+    "sha256": "6a7742c1f483d0a10c8795a65f8f70eb2daf7c5f03e435d711e725517bb3b171"
   },
   "roly/riot_sync.py": {
-    "bytes": 25628,
-    "sha256": "adca100d9a92d6144b169134d9a8abac5a767c82083075448417cecf0b792a81"
+    "bytes": 25690,
+    "sha256": "1ad528e5409d6ad0c872b8adbf58d2381a7f78cb6d537e8d45368add9edfeadc"
   },
   "roly/riot_ui.py": {
     "bytes": 10974,
@@ -340,8 +340,8 @@
     "sha256": "232ec9d5c32b1a225e0d647227560ebc0aa32c3128fa624e122b8d075c42a618"
   },
   "roly/tournament_ui.py": {
-    "bytes": 13742,
-    "sha256": "0ee2230e11aa7f9ddae14367e25e5584377f5ec23d16473b4999e0a79e884831"
+    "bytes": 13783,
+    "sha256": "eb79c98e0051f4f797ef06184ff19aa54a3fcacf57743c874aa739f6dbff04f8"
   },
   "roly/ui.py": {
     "bytes": 21123,
@@ -472,8 +472,8 @@
     "sha256": "f90a491f39966442031a502855ec1504df653e4e75c469c8d1a211f986977d29"
   },
   "tests/test_auction_http.py": {
-    "bytes": 24444,
-    "sha256": "ca6d935e1b9e2a359de0bd82cbd1176cff98efd73e8194fa0ea734599aaf30be"
+    "bytes": 26673,
+    "sha256": "4c7162951a19698f647b82faab1d7d1add27c49e6cb5ea5c573a3931f76e2ae2"
   },
   "tests/test_auction_http_client.py": {
     "bytes": 13996,
@@ -496,8 +496,8 @@
     "sha256": "283582abfdaf54573b02a2f58d5124c17fdd4436be7246bd86c35529fda93ec0"
   },
   "tests/test_auction_push.py": {
-    "bytes": 23667,
-    "sha256": "03071b6579d9bcb9b3e0c290f31c135cf651936ebd62d36c89757e71b6587a49"
+    "bytes": 27965,
+    "sha256": "36481ffdb9886a6e06a25650705a44392c9c0b5be630d3ab98ec29dd8d1cc0f9"
   },
   "tests/test_auction_push_client.py": {
     "bytes": 12896,
@@ -520,8 +520,8 @@
     "sha256": "d1b1d803f91dfb8ea1c0d938a989ef98e69d0858ba99655318da62817feb1edf"
   },
   "tests/test_auction_setup_flow.py": {
-    "bytes": 10765,
-    "sha256": "06a0384957f009151592436d3ab73088e70a54f6e0a55f1bd768cb6eb3e22e49"
+    "bytes": 11000,
+    "sha256": "9a22fbabc0691f6a9897e13014fbd09d757f5349edbc20878603618ff68b7211"
   },
   "tests/test_auction_shared.py": {
     "bytes": 16111,
@@ -572,16 +572,16 @@
     "sha256": "01cd63bbcaa75890dfe7c4fc2edd42783142d3a4d6a7c0eb1ff3b133430280d9"
   },
   "tests/test_competition.py": {
-    "bytes": 17264,
-    "sha256": "e342e2a3d4adb4ff3fef61dafb803f1c189d17d407586c08677da0f60b998fdf"
+    "bytes": 18431,
+    "sha256": "3c203c0cb51ebbb17ff12a12aca26e0caee611d145a0fa673b6e79a69791dd96"
   },
   "tests/test_competition_balance_snapshot.py": {
     "bytes": 14985,
     "sha256": "72f62cc5f52c5b6a571e179ad25277428e81ecdb43c059a8b2a81328477d2107"
   },
   "tests/test_core.py": {
-    "bytes": 18808,
-    "sha256": "55ddf9138d2493b66af62f90966a1bd87c943d909157453c26176b6bd25a7dca"
+    "bytes": 19323,
+    "sha256": "08fa8158e669aae4209f6fcba41a8fdc36076a4fd2f77cbe348f7f180c4f5adf"
   },
   "tests/test_creation_requests.py": {
     "bytes": 7312,
@@ -628,8 +628,8 @@
     "sha256": "dec23d9e3f642371bd03b64ebf9a44b68c0d1a97f0b905842e9f38c96296b7af"
   },
   "tests/test_events_ui.py": {
-    "bytes": 33586,
-    "sha256": "39046bb977553a145dee3c3367bbfb994c2ac856711ff4121b53fbe5c7920660"
+    "bytes": 33816,
+    "sha256": "413cb7e89b1a89b8a843ca0fc3c3db47e155c2d6afcd85582676f35fde9abb72"
   },
   "tests/test_home_ui.py": {
     "bytes": 20213,
@@ -700,12 +700,12 @@
     "sha256": "e6f05bc97f3edcb9f1bbc66d290da66f83d68fecff45ef27f38f8c0d416fc207"
   },
   "tests/test_member_ranks.py": {
-    "bytes": 15304,
-    "sha256": "457a2002e113d664ba437e7a6bac780e552eb2242fe253ea3e56dbc93f13fd17"
+    "bytes": 15710,
+    "sha256": "c9e09a2598fc9e77f058ea2cdc9d0e81561719d603d717ab9e8e252c9b04bbbf"
   },
   "tests/test_member_records.py": {
-    "bytes": 8940,
-    "sha256": "7716e986c7caa12cedf4b2bf09d8bde7f2643eb5f5329b7ab3ffe57f94528e13"
+    "bytes": 9255,
+    "sha256": "492e59c8bd14ef3bddc8755847da01255d096110c7f3668d68bf78a01270ca69"
   },
   "tests/test_member_snapshots.py": {
     "bytes": 11028,
@@ -724,8 +724,8 @@
     "sha256": "a86333a329406bf7082e98e10d8e235417055a626b4be779b85e62d5493d85ba"
   },
   "tests/test_page_lazy_work.py": {
-    "bytes": 9204,
-    "sha256": "801cc5950ff902f839aebaf2b49933ac6f7cb508440a37ee6d0c0c0eeba1e4ee"
+    "bytes": 9333,
+    "sha256": "98579fc17118b480e9a2e18078baa95789b60d905199986fc12c4369bab7ab1d"
   },
   "tests/test_personal_auth.py": {
     "bytes": 21396,
@@ -748,8 +748,8 @@
     "sha256": "3d10a1732bd70448da371cc7b152e514dfbb19930ae089076ef4bd4349344ee5"
   },
   "tests/test_profile_page.py": {
-    "bytes": 17751,
-    "sha256": "65e1426833300e4e1283ebe6257394166d010c32e9106071847c738387c018f7"
+    "bytes": 17820,
+    "sha256": "7d8708e101ad0063127c726efda9860c30e018b4ff5c39578b157933a8da2f9e"
   },
   "tests/test_recovery_rehearsal.py": {
     "bytes": 2177,
@@ -844,8 +844,8 @@
     "sha256": "9b92f194daa49b8e7b8f9060a5a2fd80eadb929d8fa6e0653ba01eb12f730beb"
   },
   "tests/test_ui.py": {
-    "bytes": 19465,
-    "sha256": "e6552ed1a77cccc54bcab2ee0d21416e56d4a362132b69d9b4081f1a20c97507"
+    "bytes": 19696,
+    "sha256": "12bcb1c62b0c633bc4af656df41b38cdf697a12787cf2071ceb054b40b24d644"
   },
   "신규설계_기준.md": {
     "bytes": 16205,

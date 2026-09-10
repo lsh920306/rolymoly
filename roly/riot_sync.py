@@ -269,14 +269,15 @@ class RiotSync:
             return results
         placeholders = ",".join("?" for _ in ids)
         with self.core.read_snapshot() as db:
-            rows = db.execute(f"SELECT m.id,m.canonical_id,{RANK_SELECT},p.payload,p.fetched_at,j.status,j.last_error,j.next_attempt FROM members m LEFT JOIN riot_profiles p ON p.member_id=m.id AND p.canonical_id=m.canonical_id LEFT JOIN riot_jobs j ON j.member_id=m.id AND j.canonical_id=m.canonical_id {RANK_JOINS} WHERE m.id IN ({placeholders}) AND m.status='APPROVED'", ids)
-            for row in rows:
-                payload = public_profile(profile_projection(row["payload"], row)) or {"current_tier": "", "lp": None,
-                    "champions": [], "profile_icon_url": "", "updated_at": ""}
-                error_code = row["last_error"] if row["last_error"] in _ERRORS else ""
-                payload.update(status=row["status"] or "EMPTY", last_error=error_code, error=_ERRORS.get(error_code, ""),
-                               fetched_at=row["fetched_at"], next_attempt=row["next_attempt"])
-                results[row["id"]] = payload
+            rows = db.execute(f"SELECT m.id,m.canonical_id,{RANK_SELECT},p.payload,p.fetched_at,j.status,j.last_error,j.next_attempt FROM members m LEFT JOIN riot_profiles p ON p.member_id=m.id AND p.canonical_id=m.canonical_id LEFT JOIN riot_jobs j ON j.member_id=m.id AND j.canonical_id=m.canonical_id {RANK_JOINS} WHERE m.id IN ({placeholders}) AND m.status='APPROVED'", ids).fetchall()
+        # Parse and sanitize saved JSON after releasing the pooled connection.
+        for row in rows:
+            payload = public_profile(profile_projection(row["payload"], row)) or {"current_tier": "", "lp": None,
+                "champions": [], "profile_icon_url": "", "updated_at": ""}
+            error_code = row["last_error"] if row["last_error"] in _ERRORS else ""
+            payload.update(status=row["status"] or "EMPTY", last_error=error_code, error=_ERRORS.get(error_code, ""),
+                           fetched_at=row["fetched_at"], next_attempt=row["next_attempt"])
+            results[row["id"]] = payload
         return results
 
     def _claim(self):

@@ -420,9 +420,11 @@ with selected_tab:
                                 if st.button("최신 명단 불러오기", key=f"events_roster_reload_{event_id}"):
                                     st.session_state.pop(base_key, None)
                                     st.rerun()
-                            replacement = roster_editor(core.list_members(), key=f"events_roster_{event_id}_{actor['id']}",
+                            matching_members = core.list_members(include_pending=True)
+                            members = [member for member in matching_members if member["status"] == "APPROVED"]
+                            replacement = roster_editor(members, key=f"events_roster_{event_id}_{actor['id']}",
                                 team_count=len(event["teams"]), saved=base["players"],
-                                matching_members=core.list_members(include_pending=True), revision=base["token"])
+                                matching_members=matching_members, revision=base["token"])
                             replacement_reason = st.text_input("명단 변경 사유", key=f"events_roster_reason_{event_id}", max_chars=1000)
                             if st.button("명단 확정하고 팀·대진 다시 편성", key=f"events_roster_save_{event_id}", disabled=stale) and not stale:
                                 def replace_roster():

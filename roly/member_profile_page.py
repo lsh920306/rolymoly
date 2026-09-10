@@ -84,8 +84,8 @@ def render_profile(core, token, actor, member_id):
     if not records.open:
         return
     with records:
-        data = member_records(core, member_id)
-        st.caption(f"명단 등록 {len(data['tournaments'])}개 · 확정 경기 {len(data['games'])}판")
+        data = member_records(core, member_id, game_limit=50)
+        st.caption(f"명단 등록 {len(data['tournaments'])}개 · 확정 경기 {data['game_count']}판")
         if data["games"]:
             st.dataframe([{"일시": korean_time(game["played_at"]), "구분": "일반내전" if game["kind"] == "NORMAL" else "경매",
                            "내전": game["title"] or "개별 경기", "결과": "승" if game["team"] == game["winner"] else "패",

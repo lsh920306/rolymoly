@@ -92,12 +92,20 @@ class MemberRanksTests(unittest.TestCase):
         self.core.approve_member(self.admin, second, 200)
         self.assertEqual([member["id"] for member in self.core.list_members()], [self.mid, second])
         statements = []
+        connections = []
         connect = self.core.connect
         def traced():
             db = connect()
+            connections.append(db)
             db.set_trace_callback(statements.append)
             return db
-        with patch.object(self.core, "connect", side_effect=traced):
+        from roly.riot_profile import public_profile
+        def after_release(payload):
+            for db in connections:
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    db.execute("SELECT 1")
+            return public_profile(payload)
+        with patch.object(self.core, "connect", side_effect=traced), patch("roly.riot_profile.public_profile", side_effect=after_release):
             profiles = member_profiles(self.core, [self.mid, second, self.mid])
         self.assertEqual(set(profiles), {self.mid})
         self.assertEqual(sum(statement.lstrip().upper().startswith("SELECT") for statement in statements), 1)

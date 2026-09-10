@@ -26,6 +26,7 @@ MAX_BODY = 4096
 MAX_CONTEXTS = 128
 MAX_COMMANDS = 16384
 MAX_CONTEXT_COMMANDS = 8192
+PREPARED_CONTEXT_TTL = 60.0
 EPOCH_HEADER = "X-Rolymoly-Server-Epoch"
 SESSION_HEADER = "X-Rolymoly-Session"
 _runtime = None
@@ -107,6 +108,7 @@ class AuctionHTTP:
         self.active = True
         self.lock = threading.RLock()
         self.contexts = {}
+        self.prepared_contexts = {}
         self.command_count = 0
         self.max_contexts, self.max_commands = max_contexts, max_commands
         self.max_context_commands = max_context_commands
@@ -150,6 +152,28 @@ class AuctionHTTP:
                 bucket = self.contexts[context] = Commands()
             return bucket
 
+    def prepare_bid_context(self, context, actor, state):
+        """Reuse a verified captain view only to prepare command allocation.
+
+        This marker never authorizes a bid or a cached ACK. Each new write still
+        reads current authorization under the database lock. No command bucket
+        or receipt is allocated while merely watching an auction.
+        """
+        if (not actor or not state or state.get("status") in ("COMPLETED", "CANCELLED")
+                or not any(team.get("captain_id") == actor.get("member_id")
+                           and actor.get("member_id") is not None for team in state.get("teams", ()))):
+            return
+        now = monotonic()
+        with self.lock:
+            if context in self.contexts or self.max_contexts <= 0:
+                return
+            for key, expires in tuple(self.prepared_contexts.items()):
+                if expires <= now:
+                    self.prepared_contexts.pop(key, None)
+            if context not in self.prepared_contexts and len(self.prepared_contexts) >= self.max_contexts:
+                self.prepared_contexts.pop(next(iter(self.prepared_contexts)))
+            self.prepared_contexts[context] = now + PREPARED_CONTEXT_TTL
+
     def _reserve(self, bucket):
         with self.lock:
             if len(bucket.terminal) >= self.max_context_commands or self.command_count >= self.max_commands:
@@ -164,11 +188,13 @@ class AuctionHTTP:
         started = monotonic()
         with self.lock:
             bucket = self.contexts.get(context)
+            prepared = self.prepared_contexts.pop(context, 0) > monotonic() if bucket is None else False
         if bucket is None:
             # Authenticate before allocating memory for a new context. Once it
             # exists, writes/resolutions use their own authoritative transaction
             # check; only cached ACKs need a separate current-session read.
-            self._actor(bundle["core"], token)
+            if not prepared:
+                self._actor(bundle["core"], token)
             bucket = self._bucket(context)
         with bucket.lock:
             # Pending always has priority; a newer UUID cannot get past an
@@ -215,6 +241,7 @@ class AuctionHTTP:
         received = monotonic()
         if actor is None:
             raise TransportError("session_expired", "로그인이 만료되었습니다. 다시 로그인해 주세요.", 401, reload=True)
+        self.prepare_bid_context(context, actor, state)
         if state and state["status"] in ("RUNNING", "WAITING", "PAUSED"):
             bundle["live"].ensure_worker()
         from .auction_live_panel import live_panel_data

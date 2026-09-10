@@ -73,6 +73,10 @@ class MemberRecordsTests(unittest.TestCase):
         auction_entry = next(item for item in member_records(self.core, self.ids[1])["tournaments"] if item["id"] == auction_id)
         self.assertEqual((auction_entry["price"], auction_entry["score"]), (42, 110))
         self.assertTrue(all(game["title"] and game["team_a_name"] and game["team_b_name"] for game in records["games"]))
+        recent = member_records(self.core, self.ids[0], game_limit=1)
+        self.assertEqual(recent["games"], records["games"][:1])
+        self.assertEqual((recent["game_count"], recent["wins"], recent["losses"]), (2, 1, 1))
+        self.assertEqual(recent["tournaments"], records["tournaments"])
 
     def test_corrected_and_void_games_replace_previous_win_loss_totals(self):
         game_id = self.normal()
@@ -113,7 +117,7 @@ class MemberRecordsTests(unittest.TestCase):
             return member
 
         with patch.object(self.core, "get_member", side_effect=get_then_correct):
-            snapshot = member_records(self.core, self.ids[0])
+            snapshot = member_records(self.core, self.ids[0], game_limit=50)
         self.assertEqual((snapshot["member"]["score"], snapshot["wins"], snapshot["losses"]), (110, 1, 0))
         fresh = member_records(self.core, self.ids[0])
         self.assertEqual((fresh["member"]["score"], fresh["wins"], fresh["losses"]), (90, 0, 1))

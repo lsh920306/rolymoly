@@ -121,6 +121,35 @@ class CompetitionTests(unittest.TestCase):
         self.comp.finalize_event(self.token, event_id)
         self.assertEqual(len(self.core.list_games()), 1)
 
+    def test_event_batches_fresh_rows_and_formats_after_connection_return(self):
+        event_id = self.normal(count=20)
+        expected = self.comp.get_event(event_id)
+        connect = self.core.connect
+        calls = []
+        released = []
+
+        class BatchReader:
+            def __init__(self):
+                self.db = connect()
+            def execute(self, *args):
+                return self.db.execute(*args)
+            def fetch_batches(self, statements):
+                calls.append(len(statements))
+                return [list(self.db.execute(query, params)) for query, params in statements]
+            def close(self):
+                self.db.close()
+                released.append(True)
+
+        standings = self.comp._standings_from_rows
+        def format_standings(*args):
+            self.assertEqual(released, [True])
+            return standings(*args)
+
+        with patch.object(self.core, "connect", side_effect=BatchReader), patch.object(
+                self.comp, "_standings_from_rows", side_effect=format_standings):
+            self.assertEqual(self.comp.get_event(event_id), expected)
+        self.assertEqual(calls, [5])
+
     def test_policy_changes_apply_to_new_competitions(self):
         old_event = self.normal()
         self.core.set_policy(self.token, k=25)

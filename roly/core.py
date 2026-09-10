@@ -414,7 +414,7 @@ class Core(PersonalAuth):
             row = db.execute(_MEMBER_SELECT + " WHERE m.id=?", (member_id,)).fetchone()
             if not row:
                 raise ValueError("회원을 찾을 수 없습니다.")
-            return self._member_record(row)
+        return self._member_record(row)
 
     @staticmethod
     def _member_record(row):
@@ -430,8 +430,8 @@ class Core(PersonalAuth):
     def list_members(self, include_pending=False):
         with self.read_snapshot() as db:
             order = ' ORDER BY m.riot_id COLLATE "C"' if self.is_postgres else " ORDER BY m.riot_id"
-            rows = db.execute(_MEMBER_SELECT + " WHERE (?=1 OR m.status='APPROVED')" + order, (int(bool(include_pending)),))
-            return [self._member_record(row) for row in rows]
+            rows = db.execute(_MEMBER_SELECT + " WHERE (?=1 OR m.status='APPROVED')" + order, (int(bool(include_pending)),)).fetchall()
+        return [self._member_record(row) for row in rows]
 
     def approve_member(self, token, member_id, base_score, notes="", *, expected_updated_at=None):
         base_score = integer(base_score, "기본점수")
@@ -633,13 +633,15 @@ class Core(PersonalAuth):
             self._audit(db, actor, "POLICY_CREATE", result, {"mode": mode, "k": k, "threshold": threshold, "high_k": high_k})
             return result
 
-    def _team(self, db, entries):
+    def _team(self, db, entries, members):
         if len(entries) != 5:
             raise ValueError("각 팀은 정확히 5명이어야 합니다.")
         output = []
         for entry in entries:
             member_id = entry.get("member_id", entry.get("id")) if isinstance(entry, dict) else entry
-            member = self.get_member(integer(member_id), db)
+            member = members.get(integer(member_id))
+            if member is None:
+                raise ValueError("회원을 찾을 수 없습니다.")
             if member["status"] != "APPROVED":
                 raise ValueError("승인된 회원만 출전할 수 있습니다.")
             assigned = role(entry.get("role", member["main_role"])) if isinstance(entry, dict) else member["main_role"]
@@ -649,6 +651,15 @@ class Core(PersonalAuth):
         if set(p["role"] for p in output) != set(ROLES):
             raise ValueError("각 팀은 5개 포지션에 한 명씩 배정해야 합니다.")
         return output
+
+    @staticmethod
+    def _write_statements(db, statements):
+        batch = getattr(db, "execute_batch", None)
+        if callable(batch):
+            batch(statements)
+        else:
+            for query, parameters in statements:
+                db.execute(query, parameters)
 
     def _require_event_game_access(self, db, actor, event_id, kind):
         """An outer transaction does not waive event ownership or finality."""
@@ -704,7 +715,18 @@ class Core(PersonalAuth):
                     if not fixture or fixture["core_game_id"] != existing["id"]:
                         raise ValueError("경기 요청 번호가 해당 대진과 일치하지 않습니다.")
                 return existing["id"]
-            teams = {"A": self._team(db, team_a_ids), "B": self._team(db, team_b_ids)}
+            if len(team_a_ids) != 5 or len(team_b_ids) != 5:
+                raise ValueError("각 팀은 정확히 5명이어야 합니다.")
+            member_ids = sorted({integer(e.get("member_id", e.get("id"))) if isinstance(e, dict) else integer(e)
+                                 for entries in (team_a_ids, team_b_ids) for e in entries})
+            marks = ",".join("?" for _ in member_ids)
+            # The writer lock still protects current scores and rank identity.
+            # Fetch the ten snapshots together, omitting unrelated win/award history.
+            members = {row["id"]: project_member(row) for row in db.execute(f"""SELECT
+                m.id,m.status,m.main_role,m.riot_id,m.clan_tier,{RANK_SELECT},
+                m.base_score + COALESCE((SELECT SUM(s.amount) FROM score_ledger s WHERE s.member_id=m.id),0) AS score
+                FROM members m {RANK_JOINS} WHERE m.id IN ({marks})""", member_ids)}
+            teams = {"A": self._team(db, team_a_ids, members), "B": self._team(db, team_b_ids, members)}
             all_ids = [p["member_id"] for players in teams.values() for p in players]
             if len(set(all_ids)) != 10:
                 raise ValueError("한 경기에서 같은 회원이 중복 출전할 수 없습니다.")
@@ -729,13 +751,17 @@ class Core(PersonalAuth):
                 policy = dict(found)
             game_id = db.execute("INSERT INTO games(request_key,fingerprint,kind,tournament_id,played_at,created_at,policy_id,winner,notes,actor_id) VALUES(?,?,?,?,?,?,?,?,?,?)", (str(request_key), fingerprint, kind, None if tournament_id is None else str(tournament_id), timestamp, now(), policy["id"], winner, notes, actor["id"])).lastrowid
             db.execute("INSERT INTO game_revisions(game_id,revision,winner,status,reason,actor_id,created_at) VALUES(?,1,?,'CONFIRMED',?,?,?)", (game_id, winner, "최초 결과 확정", actor["id"], now()))
+            writes = []
             for team, players in teams.items():
                 for player in players:
                     k = 0 if kind == "AUCTION" else policy["high_k"] if policy["mode"] == "bracket" and player["score_before"] >= policy["threshold"] else policy["k"]
                     delta = k if winner == team else -k
-                    db.execute("INSERT INTO game_players(game_id,member_id,team,role,score_before,delta,k,riot_id_snapshot,clan_tier_snapshot,current_tier_snapshot,current_tier_lp_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (game_id, player["member_id"], team, player["role"], player["score_before"], delta, k, player["riot_id_snapshot"], player["clan_tier_snapshot"], player["current_tier_snapshot"], player["current_tier_lp_snapshot"]))
-                    db.execute("INSERT INTO game_settlements(game_id,revision,member_id,score_before,delta,created_at) VALUES(?,1,?,?,?,?)", (game_id, player["member_id"], player["score_before"], delta, now()))
-                    db.execute("INSERT INTO score_ledger(member_id,amount,source,game_id,revision,reason,actor_id,created_at) VALUES(?,?,'GAME',?,1,?,?,?)", (player["member_id"], delta, game_id, "경기 결과 확정", actor["id"], now()))
+                    writes.append(("INSERT INTO game_players(game_id,member_id,team,role,score_before,delta,k,riot_id_snapshot,clan_tier_snapshot,current_tier_snapshot,current_tier_lp_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (game_id, player["member_id"], team, player["role"], player["score_before"], delta, k, player["riot_id_snapshot"], player["clan_tier_snapshot"], player["current_tier_snapshot"], player["current_tier_lp_snapshot"])))
+                    writes.append(("INSERT INTO game_settlements(game_id,revision,member_id,score_before,delta,created_at) VALUES(?,1,?,?,?,?)", (game_id, player["member_id"], player["score_before"], delta, now())))
+                    writes.append(("INSERT INTO score_ledger(member_id,amount,source,game_id,revision,reason,actor_id,created_at) VALUES(?,?,'GAME',?,1,?,?,?)", (player["member_id"], delta, game_id, "경기 결과 확정", actor["id"], now())))
+            # No statement consumes another player's generated ID; the outer
+            # transaction/savepoint still owns commit and all-or-nothing rollback.
+            self._write_statements(db, writes)
             if tournament_id is not None:
                 # Reserve this fixture with its ledger in the same savepoint.
                 # Competition completes the result and propagation in the outer
@@ -786,12 +812,14 @@ class Core(PersonalAuth):
             revision = game["revision"] + 1
             status = "VOID" if void else "CONFIRMED"
             winner = game["winner"] if void else winner
+            writes = []
             for player in db.execute("SELECT * FROM game_players WHERE game_id=?", (game_id,)).fetchall():
                 delta = 0 if void else player["k"] if player["team"] == winner else -player["k"]
                 difference = delta - player["delta"]
-                db.execute("INSERT INTO game_settlements(game_id,revision,member_id,score_before,delta,created_at) VALUES(?,?,?,?,?,?)", (game_id, revision, player["member_id"], player["score_before"], delta, now()))
-                db.execute("INSERT INTO score_ledger(member_id,amount,source,game_id,revision,reason,actor_id,created_at) VALUES(?,?,'CORRECTION',?,?,?,?,?)", (player["member_id"], difference, game_id, revision, reason, actor["id"], now()))
-                db.execute("UPDATE game_players SET delta=? WHERE game_id=? AND member_id=?", (delta, game_id, player["member_id"]))
+                writes.append(("INSERT INTO game_settlements(game_id,revision,member_id,score_before,delta,created_at) VALUES(?,?,?,?,?,?)", (game_id, revision, player["member_id"], player["score_before"], delta, now())))
+                writes.append(("INSERT INTO score_ledger(member_id,amount,source,game_id,revision,reason,actor_id,created_at) VALUES(?,?,'CORRECTION',?,?,?,?,?)", (player["member_id"], difference, game_id, revision, reason, actor["id"], now())))
+                writes.append(("UPDATE game_players SET delta=? WHERE game_id=? AND member_id=?", (delta, game_id, player["member_id"])))
+            self._write_statements(db, writes)
             db.execute("INSERT INTO game_revisions(game_id,revision,winner,status,reason,actor_id,created_at) VALUES(?,?,?,?,?,?,?)", (game_id, revision, winner, status, reason, actor["id"], now()))
             db.execute("UPDATE games SET winner=?,status=?,revision=? WHERE id=?", (winner, status, revision, game_id))
             self._audit(db, actor, "GAME_VOID" if void else "GAME_CORRECT", game_id, {"winner": winner, "reason": reason})
@@ -876,9 +904,17 @@ class Core(PersonalAuth):
                 if existing["fingerprint"] != fingerprint:
                     raise ValueError("같은 보상 키에 다른 내용이 전달되었습니다.")
                 return existing["id"]
+            balances = {}
+            for offset in range(0, len(member_ids), 200):
+                batch = member_ids[offset:offset + 200]
+                marks = ",".join("?" for _ in batch)
+                balances.update({row["id"]: row["balance"] for row in db.execute(f"""SELECT m.id,
+                    COALESCE((SELECT SUM(a.units) FROM award_ledger a WHERE a.member_id=m.id),0) AS balance
+                    FROM members m WHERE m.id IN ({marks})""", batch)})
             for member_id in member_ids:
-                self.get_member(member_id, db)
-                balance = db.execute("SELECT COALESCE(sum(units),0) FROM award_ledger WHERE member_id=?", (member_id,)).fetchone()[0]
+                if member_id not in balances:
+                    raise ValueError("회원을 찾을 수 없습니다.")
+                balance = balances[member_id]
                 if balance + units < 0:
                     raise ValueError("보상을 보유량보다 많이 회수할 수 없습니다.")
             batch_id = db.execute("INSERT INTO award_batches(request_key,fingerprint,event_id,reason,actor_id,created_at) VALUES(?,?,?,?,?,?)", (str(request_key), fingerprint, None if event_id is None else str(event_id), reason, actor["id"], now())).lastrowid

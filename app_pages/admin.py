@@ -75,11 +75,12 @@ members = core.list_members(include_pending=True)
 member_map = {member["id"]: member for member in members}
 pending = [member for member in members if member["status"] == "PENDING" and member.get("registration_status") != "REJECTED"]
 active_members = [member for member in members if member["status"] == "APPROVED"]
+current_policy = core.policy()
 
 with st.container(horizontal=True):
     st.metric("승인 대기", f"{len(pending)}명", border=True)
     st.metric("활동 회원", f"{len(active_members)}명", border=True)
-    st.metric("현재 일반내전 증감", f"±{core.policy()['k']}점", border=True)
+    st.metric("현재 일반내전 증감", f"±{current_policy['k']}점", border=True)
 
 join_tab, members_tab, policy_tab, awards_tab, accounts_tab, audit_tab = st.tabs(
     ["가입 승인", "회원·점수", "점수 정책", "업적 관리", "운영 계정", "변경 기록"],
@@ -246,7 +247,6 @@ if members_tab.open:
 if policy_tab.open:
     with policy_tab:
         st.subheader("일반내전 점수 정책")
-        current_policy = core.policy()
         st.write(f"현재 일반내전은 승리 **+{current_policy['k']}점**, 패배 **-{current_policy['k']}점**입니다.")
         st.caption("변경한 증감량은 이후 새로 개설하는 일반내전부터 적용됩니다. 기존 내전은 개설 당시 규칙을 유지합니다. 경매는 전력점수 증감 없이 우승 업적으로 보상합니다.")
         with st.form("admin_policy"):

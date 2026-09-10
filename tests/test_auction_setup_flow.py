@@ -1,6 +1,7 @@
 """Captain selection and compact settings, including stale-dialog boundaries."""
 from datetime import datetime, timezone
 import unittest
+from unittest.mock import patch
 
 from tests import test_live_auction_ui
 from roly.core import ROLES
@@ -154,7 +155,10 @@ class AuctionSetupFlowTests(unittest.TestCase):
         # The host need not be a captain, and click order assigns team numbers.
         selected = [f.ids[6], f.ids[1], f.ids[11], f.ids[16]]
         app.button(key=f"t_captain_toggle_{event_id}_{selected[0]}").click().run()
-        app.text_input(key=f"t_captain_query_{event_id}").set_value("no-matching-member").run()
+        from roly.riot_profile import member_profiles
+        with patch("roly.riot_profile.member_profiles", wraps=member_profiles) as loaded:
+            app.text_input(key=f"t_captain_query_{event_id}").set_value("no-matching-member").run()
+        self.assertEqual(loaded.call_args.args[1], [])
         self.assertEqual(app.session_state[f"t_captain_draft_{event_id}"]["selected"], selected[:1])
         self.assertFalse(any(str(widget.key).startswith("t_captain_toggle_") for widget in app.button))
         app.text_input(key=f"t_captain_query_{event_id}").set_value("").run()

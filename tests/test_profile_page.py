@@ -263,6 +263,7 @@ class ProfilePageTests(unittest.TestCase):
             self.assertFalse(any("낙찰 포인트" in frame.value.columns for frame in app.dataframe))
             self.open_records(app)
         loaded.assert_called_once()
+        self.assertEqual(loaded.call_args.kwargs, {"game_limit": 50})
         history = next(frame.value for frame in app.dataframe if "낙찰 포인트" in frame.value.columns)
         self.assertEqual(len(history), 2)
         self.assertEqual(set(history["구분"]), {"일반내전", "경매"})

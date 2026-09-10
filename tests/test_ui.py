@@ -125,7 +125,10 @@ class AppUITests(unittest.TestCase):
             self.assertNotIn(private, public_text)
 
     def test_normal_form_rejects_nine_and_creates_exactly_ten(self):
-        self.page("normal")
+        with patch.object(Core, "list_members", autospec=True, side_effect=Core.list_members) as loaded:
+            self.page("normal")
+        self.assertEqual(loaded.call_count, 1)
+        self.assertEqual(loaded.call_args.kwargs, {"include_pending": True})
         before = {event["id"] for event in self.competition.list_events()}
         chosen_by_role = {
             role: [member["id"] for member in self.core.list_members() if member["main_role"] == role][:2]

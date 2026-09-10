@@ -61,13 +61,17 @@ def balance_teams(players: list[dict]) -> list[list[dict]]:
     # Fixing the first role removes permutations that merely rename teams.
     best = None
     best_key = None
-    permutations = [list(itertools.permutations(bucket)) for bucket in buckets[1:]]
-    for other_roles in itertools.product(*permutations):
-        columns = (tuple(buckets[0]),) + other_roles
-        totals = [sum(column[i]["score"] for column in columns) for i in range(count)]
+    permutations = [[(people, tuple(p["score"] for p in people))
+                     for people in itertools.permutations(bucket)] for bucket in buckets[1:]]
+    fixed_scores = tuple(p["score"] for p in buckets[0])
+    for a, b, c, d in itertools.product(*permutations):
+        # Score lookup is invariant across the 24**4 candidate combinations.
+        # Keep the same enumeration and summation order, including tie breaks.
+        totals = [sum((fixed_scores[i], a[1][i], b[1][i], c[1][i], d[1][i])) for i in range(count)]
         key = (max(totals) - min(totals), sum(total * total for total in totals))
         if best_key is None or key < best_key:
             best_key = key
+            columns = (tuple(buckets[0]), a[0], b[0], c[0], d[0])
             best = [[column[i] for column in columns] for i in range(count)]
         if key[0] == 0:
             break
@@ -417,7 +421,8 @@ class Competition:
                 raise ValueError("조별리그는 6팀 또는 8팀에서 사용할 수 있습니다.")
             if format_name == "RANKING" and len(captain_ids) != 4:
                 raise ValueError("순위 결정전은 4팀에서만 진행할 수 있습니다.")
-            players = {i: self._player_snapshot(conn, i) for i in member_ids}
+            players = {player["member_id"]: player for player in self._player_snapshots(
+                conn, [{"member_id": member_id, "role": None} for member_id in member_ids])}
             event_id = self._new_event(conn, actor, title, "AUCTION", format_name, "AUCTION")
             conn.execute("UPDATE competition_events SET build_mode='AUCTION',team_count=? WHERE id=?", (len(captain_ids), event_id))
             captain_teams = {}
@@ -426,8 +431,8 @@ class Competition:
                 team_id = conn.execute("INSERT INTO competition_teams(event_id,name,captain_id,budget) VALUES(?,?,?,?)",
                                        (event_id, f"{player['riot_id'].split('#')[0]} 팀", captain, auction_budget(player["score"]))).lastrowid
                 captain_teams[captain] = team_id
-            for member_id, player in players.items():
-                self._insert_player(conn, event_id, player, captain_teams.get(member_id))
+            self._write_statements(conn, [self._insert_player_statement(event_id, player, captain_teams.get(member_id))
+                                          for member_id, player in players.items()])
             self._audit(conn, event_id, actor, "CREATE", f"{len(captain_ids)}팀 경매, {format_name}")
             return event_id
 
@@ -726,8 +731,14 @@ class Competition:
     @staticmethod
     def _standings(conn, event_id, group=""):
         games = [dict(r) for r in conn.execute("SELECT * FROM competition_games WHERE event_id=? AND group_key=? AND stage IN ('MAIN','TIEBREAK') ORDER BY round,id", (event_id, group))]
-        team_ids = {g[k] for g in games for k in ("team_a", "team_b") if g[k] is not None}
         names = {r["id"]: r["name"] for r in conn.execute("SELECT id,name FROM competition_teams WHERE event_id=?", (event_id,))}
+        return Competition._standings_from_rows(games, names, group)
+
+    @staticmethod
+    def _standings_from_rows(games, names, group=""):
+        games = sorted((g for g in games if g["group_key"] == group and g["stage"] in ("MAIN", "TIEBREAK")),
+                       key=lambda g: (g["round"], g["id"]))
+        team_ids = {g[k] for g in games for k in ("team_a", "team_b") if g[k] is not None}
         stats = {t: {"team_id": t, "team_name": names[t], "group": group, "played": 0, "wins": 0, "losses": 0, "points": 0, "h2h": 0, "tiebreak_wins": 0} for t in team_ids}
         for game in games:
             if game["status"] != "COMPLETED" or game["stage"] != "MAIN":
@@ -964,46 +975,56 @@ class Competition:
             return labels
 
     def get_event(self, event_id):
+        statements = [
+            ("SELECT e.*,a.display_name AS created_by_name FROM competition_events e LEFT JOIN accounts a ON a.id=e.created_by WHERE e.id=?", (event_id,)),
+            ("SELECT * FROM competition_players WHERE event_id=? ORDER BY id", (event_id,)),
+            ("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event_id,)),
+            ("SELECT * FROM competition_games WHERE event_id=? ORDER BY round,group_key,position,id", (event_id,)),
+            ("SELECT * FROM competition_audit WHERE event_id=? ORDER BY id DESC LIMIT 30", (event_id,)),
+        ]
         with closing(self.service.connect()) as conn:
             conn.execute("BEGIN")
-            event = self._event(conn, event_id)
-            event["policy_snapshot"] = json.loads(event["policy_snapshot"])
-            participants = [dict(r) for r in conn.execute("SELECT * FROM competition_players WHERE event_id=? ORDER BY id", (event_id,))]
-            players = [p for p in participants if p["participation_status"] == "SELECTED"]
-            teams = [dict(r) for r in conn.execute("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event_id,))]
-            for team in teams:
-                team["players"] = [p for p in players if p["team_id"] == team["id"]]
-                team["remaining"] = team["budget"] - sum(p["price"] for p in team["players"])
-                team["total_score"] = sum(p["score"] for p in team["players"])
-            names = {t["id"]: t["name"] for t in teams}
-            games = [dict(r) for r in conn.execute("SELECT * FROM competition_games WHERE event_id=? ORDER BY round,group_key,position,id", (event_id,))]
-            for game in games:
-                game["team_a_name"] = names.get(game["team_a"], "미정")
-                game["team_b_name"] = names.get(game["team_b"], "미정")
-                game["winner_name"] = names.get(game["winner_team_id"], "")
-            event["teams"] = teams
-            event["pool"] = [p for p in players if p["team_id"] is None]
-            event["players"] = players
-            event["participants"] = participants
-            event["excluded_players"] = [p for p in participants if p["participation_status"] == "EXCLUDED"]
-            event["participant_count"] = len(players)
-            event["games"] = games
-            event["archived_games"] = []
-            if _table_exists(conn, "competition_game_archives"):
-                event["archived_games"] = [{**dict(row), "snapshot": json.loads(row["snapshot"])} for row in conn.execute("SELECT * FROM competition_game_archives WHERE event_id=? ORDER BY id DESC", (event_id,))]
-            event["standings"] = []
-            event["final_rankings"] = []
-            if event["format"] == "RANKING":
-                for stage, first_rank in (("FINAL", 1), ("THIRD_PLACE", 3)):
-                    match = next((g for g in games if g["stage"] == stage and g["status"] == "COMPLETED"), None)
-                    if match:
-                        loser = match["team_b"] if match["winner_team_id"] == match["team_a"] else match["team_a"]
-                        event["final_rankings"].extend([{"rank": first_rank, "team_id": match["winner_team_id"], "team_name": names[match["winner_team_id"]]},
-                            {"rank": first_rank + 1, "team_id": loser, "team_name": names[loser]}])
-            if event["format"] in ("LEAGUE", "GROUP_STAGE") and games:
-                for group in (("A", "B") if event["format"] == "GROUP_STAGE" else ("",)):
-                    event["standings"].extend(self._standings(conn, event_id, group))
-            event["audit"] = [dict(r) for r in conn.execute("SELECT * FROM competition_audit WHERE event_id=? ORDER BY id DESC LIMIT 30", (event_id,))]
-            event["roster_token"] = self._roster_digest(event, participants, teams,
-                sorted(games, key=lambda game: game["id"]), event["audit"][0]["id"] if event["audit"] else 0)
-            return event
+            fetch = getattr(conn, "fetch_batches", None)
+            batches = fetch(statements) if callable(fetch) else [list(conn.execute(q, p)) for q, p in statements]
+            if not batches[0]:
+                raise ValueError("대회를 찾을 수 없습니다.")
+            event = dict(batches[0][0])
+            participants, teams, games, audit = ([dict(r) for r in rows] for rows in batches[1:])
+            archives = ([dict(r) for r in conn.execute("SELECT * FROM competition_game_archives WHERE event_id=? ORDER BY id DESC", (event_id,))]
+                        if _table_exists(conn, "competition_game_archives") else [])
+        # Format and rank the same snapshot after returning the DB connection.
+        event["policy_snapshot"] = json.loads(event["policy_snapshot"])
+        players = [p for p in participants if p["participation_status"] == "SELECTED"]
+        for team in teams:
+            team["players"] = [p for p in players if p["team_id"] == team["id"]]
+            team["remaining"] = team["budget"] - sum(p["price"] for p in team["players"])
+            team["total_score"] = sum(p["score"] for p in team["players"])
+        names = {t["id"]: t["name"] for t in teams}
+        for game in games:
+            game["team_a_name"] = names.get(game["team_a"], "미정")
+            game["team_b_name"] = names.get(game["team_b"], "미정")
+            game["winner_name"] = names.get(game["winner_team_id"], "")
+        event["teams"] = teams
+        event["pool"] = [p for p in players if p["team_id"] is None]
+        event["players"] = players
+        event["participants"] = participants
+        event["excluded_players"] = [p for p in participants if p["participation_status"] == "EXCLUDED"]
+        event["participant_count"] = len(players)
+        event["games"] = games
+        event["archived_games"] = [{**row, "snapshot": json.loads(row["snapshot"])} for row in archives]
+        event["standings"] = []
+        event["final_rankings"] = []
+        if event["format"] == "RANKING":
+            for stage, first_rank in (("FINAL", 1), ("THIRD_PLACE", 3)):
+                match = next((g for g in games if g["stage"] == stage and g["status"] == "COMPLETED"), None)
+                if match:
+                    loser = match["team_b"] if match["winner_team_id"] == match["team_a"] else match["team_a"]
+                    event["final_rankings"].extend([{"rank": first_rank, "team_id": match["winner_team_id"], "team_name": names[match["winner_team_id"]]},
+                        {"rank": first_rank + 1, "team_id": loser, "team_name": names[loser]}])
+        if event["format"] in ("LEAGUE", "GROUP_STAGE") and games:
+            for group in (("A", "B") if event["format"] == "GROUP_STAGE" else ("",)):
+                event["standings"].extend(self._standings_from_rows(games, names, group))
+        event["audit"] = audit
+        event["roster_token"] = self._roster_digest(event, participants, teams,
+            sorted(games, key=lambda game: game["id"]), event["audit"][0]["id"] if event["audit"] else 0)
+        return event

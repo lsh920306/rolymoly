@@ -133,7 +133,18 @@ class CoreTests(unittest.TestCase):
 
     def test_game_retry_and_changed_payload(self):
         ids = self.members()
-        game = self.core.record_game(self.token, "once", ids[:5], ids[5:], "A")
+        queries = []
+        connect = self.core.connect
+        def traced():
+            db = connect()
+            db.set_trace_callback(queries.append)
+            return db
+        with patch.object(self.core, "connect", side_effect=traced):
+            game = self.core.record_game(self.token, "once", ids[:5], ids[5:], "A")
+        reads = [query for query in queries if query.lstrip().upper().startswith("SELECT") and "FROM members m" in query]
+        self.assertEqual(len(reads), 1)
+        self.assertNotIn("game_players", reads[0])
+        self.assertNotIn("award_ledger", reads[0])
         self.assertEqual(self.core.record_game(self.token, "once", ids[:5], ids[5:], "A"), game)
         self.assertEqual(self.core.get_member(ids[0])["score"], 110)
         with self.assertRaises(ValueError):

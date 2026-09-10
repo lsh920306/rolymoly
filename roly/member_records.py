@@ -22,13 +22,15 @@ def saved_tier(value, lp=None):
     return f"{value} · {lp} LP" if lp is not None else str(value)
 
 
-def member_records(core, member_id):
+def member_records(core, member_id, *, game_limit=None):
+    if game_limit is not None and (type(game_limit) is not int or not 1 <= game_limit <= 1000):
+        raise ValueError("최근 경기 조회 개수를 확인해 주세요.")
     with closing(core.connect()) as db:
         db.execute("BEGIN")
         member = core.get_member(member_id, conn=db)
         if member["status"] != "APPROVED":
             raise ValueError("현재 활동 중인 회원의 기록만 조회할 수 있습니다.")
-        games = [dict(row) for row in db.execute("""
+        game_sql = """
             SELECT g.id,g.kind,g.played_at,g.winner,p.team,p.delta,p.score_before,
                    p.riot_id_snapshot AS riot_id,p.clan_tier_snapshot,p.current_tier_snapshot,p.current_tier_lp_snapshot,
                    e.title,ta.name AS team_a_name,tb.name AS team_b_name
@@ -38,7 +40,21 @@ def member_records(core, member_id):
             LEFT JOIN competition_teams ta ON ta.id=cg.team_a
             LEFT JOIN competition_teams tb ON tb.id=cg.team_b
             WHERE p.member_id=? AND g.status='CONFIRMED' ORDER BY g.played_at DESC,g.id DESC
-        """, (member_id,))]
+        """
+        parameters = (member_id,)
+        if game_limit is not None:
+            game_sql += " LIMIT ?"
+            parameters += (game_limit,)
+        games = [dict(row) for row in db.execute(game_sql, parameters)]
+        if game_limit is None:
+            game_count = len(games)
+            wins = sum(game["team"] == game["winner"] for game in games)
+        else:
+            totals = db.execute("""SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN p.team=g.winner THEN 1 ELSE 0 END),0) AS wins
+                FROM game_players p JOIN games g ON g.id=p.game_id
+                WHERE p.member_id=? AND g.status='CONFIRMED'""", (member_id,)).fetchone()
+            game_count, wins = totals["total"], totals["wins"]
         tournaments = [dict(row) for row in db.execute("""
             SELECT e.id,e.title,e.kind,e.status,e.created_at,t.name AS team_name,
                    p.role,p.score,p.price,t.captain_id,p.riot_id,
@@ -51,15 +67,14 @@ def member_records(core, member_id):
     return {
         "member": {key: member[key] for key in ("id", "riot_id", "main_role", "sub_role", "score", "cats", "stars", "medals", "trophies",
                     "clan_tier", "current_tier", "current_tier_lp")},
-        "games": games, "tournaments": tournaments,
-        "wins": sum(game["team"] == game["winner"] for game in games),
-        "losses": sum(game["team"] != game["winner"] for game in games),
+        "games": games, "tournaments": tournaments, "game_count": game_count,
+        "wins": wins, "losses": game_count - wins,
     }
 
 
 @st.dialog("회원 기록", width="large")
 def show_member_record(core, member_id):
-    data = member_records(core, member_id)
+    data = member_records(core, member_id, game_limit=50)
     member = data["member"]
     st.subheader(member["riot_id"])
     st.caption(f"{ROLE_NAMES[member['main_role']]} / {ROLE_NAMES[member['sub_role']]} · 전력점수 {member['score']:,} P · 우승 기호 {award_label(member)}")
@@ -69,7 +84,7 @@ def show_member_record(core, member_id):
     # dialog or rerunning the surrounding lounge/member page.
     refresh_control(core, st.session_state.get("token"), [member_id],
                     key=f"record_{member_id}", show_details=True, rerun_on_update=False)
-    st.write(f"내전·경매 명단 등록 {len(data['tournaments'])}개 · 확정 경기 {len(data['games'])}판 · {data['wins']}승 {data['losses']}패")
+    st.write(f"내전·경매 명단 등록 {len(data['tournaments'])}개 · 확정 경기 {data['game_count']}판 · {data['wins']}승 {data['losses']}패")
     if data["games"]:
         st.markdown("**최근 경기**")
         st.dataframe([

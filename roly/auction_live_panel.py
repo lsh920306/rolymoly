@@ -677,12 +677,14 @@ JS = STAGE_JS.replace("export default function(", "function renderAuctionStage("
 COMPONENT_REVISION = sha256((HTML + "\0" + CSS + "\0" + JS).encode()).hexdigest()[:16]
 
 
-def live_panel_data(state, *, control=None, transport):
+def live_panel_data(state, *, control=None, transport, stage=None):
     """Send presentation data only, never account tokens or database settings."""
     lot = state.get("current_lot") if state else None
-    stage = stage_data(state) if lot else None
+    # A room may format this public stage once for its entire subscriber batch.
+    # Keep only the nested representation: every client reads data.stage, and
+    # flattening it too sends the same player/profile payload twice per frame.
+    stage = stage if stage is not None else stage_data(state) if lot else None
     return {
-        **(stage or {}),
         "kind": "stage",
         "available": state is not None,
         "status": state.get("status") if state else None,
