@@ -80,7 +80,10 @@ def render_profile(core, token, actor, member_id):
                                         "숙련도 레벨": st.column_config.NumberColumn(format="%d")})
         else:
             st.caption("아직 저장된 Riot 정보가 없습니다." if not profile else "아직 챔피언 숙련도 기록이 없습니다.")
-    with st.expander("일반내전·경매 기록"):
+    records = st.expander("일반내전·경매 기록", key=f"profile_records_{member_id}", on_change="rerun")
+    if not records.open:
+        return
+    with records:
         data = member_records(core, member_id)
         st.caption(f"명단 등록 {len(data['tournaments'])}개 · 확정 경기 {len(data['games'])}판")
         if data["games"]:

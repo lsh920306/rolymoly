@@ -86,6 +86,13 @@ class ProfilePageTests(unittest.TestCase):
         return "\n".join(item.proto.body for item in app.get("html")
                          if 'class="roly-member-profile"' in item.proto.body)
 
+    def open_records(self, app):
+        records = next(item for item in app.expander if item.label == "일반내전·경매 기록")
+        wire = app._tree.get_widget_states()
+        wire.widgets.add(id=records.proto.id, bool_value=True)
+        app._run(wire)
+        self.assertFalse(app.exception, [item.message for item in app.exception])
+
     def test_direct_hidden_route_uses_cached_rank_real_record_and_native_champion_table(self):
         self.cache()
         app = self.app(self.mid)
@@ -252,6 +259,9 @@ class ProfilePageTests(unittest.TestCase):
         from roly.member_records import member_records
         with patch("roly.member_profile_page.member_records", wraps=member_records) as loaded:
             app = self.app(self.mid)
+            loaded.assert_not_called()
+            self.assertFalse(any("낙찰 포인트" in frame.value.columns for frame in app.dataframe))
+            self.open_records(app)
         loaded.assert_called_once()
         history = next(frame.value for frame in app.dataframe if "낙찰 포인트" in frame.value.columns)
         self.assertEqual(len(history), 2)
@@ -268,16 +278,19 @@ class ProfilePageTests(unittest.TestCase):
         self.assertNotIn("private-", history.to_json())
         self.assertFalse(any(button.label in ("회원 정보 수정", "닉네임 변경") for button in app.button))
         captain = self.app(ids[1])
+        self.open_records(captain)
         captain_history = next(frame.value for frame in captain.dataframe if "낙찰 포인트" in frame.value.columns)
         captain_sale = captain_history.loc[captain_history["구분"] == "경매"].iloc[0]
         self.assertEqual((captain_sale["역할"], captain_sale["팀"]), ("팀장", team["name"]))
         self.assertEqual(set(captain_history["낙찰 포인트"]), {"—"})
         unassigned = self.app(ids[2])
+        self.open_records(unassigned)
         unassigned_history = next(frame.value for frame in unassigned.dataframe if "낙찰 포인트" in frame.value.columns)
         unassigned_sale = unassigned_history.loc[unassigned_history["구분"] == "경매"].iloc[0]
         self.assertEqual((unassigned_sale["팀"], unassigned_sale["역할"]), ("미배정", "선수"))
         self.assertEqual(set(unassigned_history["낙찰 포인트"]), {"—"})
         free = self.app(ids[3])
+        self.open_records(free)
         free_history = next(frame.value for frame in free.dataframe if "낙찰 포인트" in frame.value.columns)
         self.assertEqual(free_history.loc[free_history["구분"] == "경매", "낙찰 포인트"].tolist(), ["0 P"])
         self.assertEqual(comp.get_event(auction_id), original)

@@ -4,6 +4,7 @@ import os
 import tempfile
 from types import SimpleNamespace
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
@@ -63,6 +64,7 @@ class FakeSync:
 
 class RiotUITests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(native_blocks())
         folder = tempfile.TemporaryDirectory(prefix="roly-riot-ui-")
         self.addCleanup(folder.cleanup)
         self.path = Path(folder.name) / "test.sqlite3"
@@ -134,6 +136,8 @@ class RiotUITests(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertFalse(app.button)
             self.assertFalse(sync.queued)
+            app.session_state.riot_picker_panel_qa_picker = True
+            app.run()
             app.selectbox(key="riot_member_picker_qa_picker").set_value(second).run()
             self.assertFalse(app.exception)
             self.assertFalse(sync.queued)
@@ -160,6 +164,8 @@ member_refresh_picker(core, st.session_state.token, st.session_state.players, ke
             app = self.app(script, self.token)
             app.session_state.players = [{"id": 9001, "member_id": first, "riot_id": "AuctionFirst#QA"},
                                          {"id": 9002, "member_id": second, "riot_id": "AuctionSecond#QA"}]
+            app.run()
+            app.session_state.riot_picker_panel_auction_qa = True
             app.run()
             app.selectbox(key="riot_member_picker_auction_qa").set_value(first).run()
             app.button(key=f"riot_refresh_auction_qa_{first}").click().run()

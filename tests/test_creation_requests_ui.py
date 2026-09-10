@@ -1,6 +1,7 @@
 """Native browser-payload retries and stale roster confirmation, temporary DB only."""
 import sqlite3
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 
 from roly.competition import Competition
@@ -12,6 +13,7 @@ from tests import test_tournament_ui as fixtures
 
 class CreationRequestUITests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(native_blocks())
         self.case = fixtures.TournamentUITests()
         self.case.setUp()
         self.addCleanup(self.case.doCleanups)
@@ -167,17 +169,35 @@ class CreationRequestUITests(unittest.TestCase):
         self.assertEqual(rows[0]["당시 현재 티어"], "골드 2 · 0 LP")
         self.assertEqual(profile_snapshot_columns({})["당시 현재 티어"], "기록 없음")
         captured = []
+        downloads = {}
         original = Core.csv_bytes
+        import streamlit as st
+        original_download = st.download_button
         def capture(rows):
             captured.extend(dict(row) for row in rows)
             return original(rows)
+        def register_download(label, data, *args, **kwargs):
+            downloads[kwargs["file_name"]] = data
+            return original_download(label, data, *args, **kwargs)
         self.app.session_state["focus_event"] = eid
         self.app.session_state["records_kind"] = "NORMAL"
-        with patch.object(Core, "csv_bytes", side_effect=capture):
+        with patch.object(Core, "csv_bytes", side_effect=capture), patch("streamlit.download_button", side_effect=register_download):
+            self.app.session_state["events_detail_tab_NORMAL"] = "일반내전 명단"
             self.app.switch_page("app_pages/events.py").run()
             self.healthy()
+            self.assertEqual(captured, [], "Rendering must not eagerly encode the roster CSV")
+            roster_download = downloads[f"rolymoly_event_{eid}_roster.csv"]
+            self.assertTrue(callable(roster_download))
+            self.assertIn("당시 클랜", roster_download().decode("utf-8-sig"))
+            self.app.session_state["events_detail_tab_NORMAL"] = "전체 경기 이력"
+            self.app.run()
             self.widget("selectbox", "상세 기록을 볼 경기").set_value(gid).run()
             self.healthy()
+            saved_count = len(captured)
+            player_download = downloads[f"rolymoly_game_{gid}_players.csv"]
+            self.assertTrue(callable(player_download))
+            self.assertIn("골드 2", player_download().decode("utf-8-sig"))
+            self.assertGreater(len(captured), saved_count)
         tier_rows = [row for row in captured if row.get("당시 클랜 티어") == "당시 클랜"]
         self.assertTrue(any("편성 당시 전력" in row for row in tier_rows))
         self.assertTrue(any("경기 직전 점수" in row for row in tier_rows))

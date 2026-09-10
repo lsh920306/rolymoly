@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Barrier
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AccountLifecycleTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(native_blocks())
         temp = TemporaryDirectory(prefix="roly-account-lifecycle-")
         self.addCleanup(temp.cleanup)
         self.core = Core(Path(temp.name) / "isolated.sqlite3")
@@ -182,7 +184,11 @@ class AccountLifecycleTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.core.member_active_events(self.member_token, self.mid)
         app = self.page("admin", self.admin)
+        app.session_state.admin_active_tab = "회원·점수"
+        app.run()
         app.selectbox(key="admin_member_id").select(self.mid).run()
+        app.session_state[f"admin_membership_panel_{self.mid}"] = True
+        app.run()
         self.assertFalse(app.exception)
         self.assertTrue(any("진행 중인 내전·경매" in warning.value for warning in app.warning))
         tables = [item.value for item in app.dataframe if "팀장" in item.value.columns]
@@ -195,7 +201,11 @@ class AccountLifecycleTests(unittest.TestCase):
     def test_kick_rejects_stale_member_review_after_profile_change(self):
         self.approve()
         app = self.page("admin", self.admin)
+        app.session_state.admin_active_tab = "회원·점수"
+        app.run()
         app.selectbox(key="admin_member_id").select(self.mid).run()
+        app.session_state[f"admin_membership_panel_{self.mid}"] = True
+        app.run()
         self.widget(app, "text_input", "탈퇴 처리 사유").set_value("reviewed old member")
         member = self.core.get_member(self.mid)
         self.core.update_member(self.admin, self.mid, "Changed#QA", "TOP", "JG", 170, "concurrent profile edit")
@@ -234,6 +244,8 @@ class AccountLifecycleTests(unittest.TestCase):
     def test_admin_ui_promotes_existing_personal_account_without_issuing_or_relinking(self):
         self.approve()
         app = self.page("admin", self.admin)
+        app.session_state.admin_active_tab = "운영 계정"
+        app.run()
         labels = [item.label for item in app.button] + [item.label for item in app.selectbox]
         self.assertNotIn("운영 계정 생성", labels)
         self.assertNotIn("회원 연결 변경", labels)
@@ -248,6 +260,8 @@ class AccountLifecycleTests(unittest.TestCase):
         self.core.reject_registration(self.admin, self.mid, "revise")
         self.core.kick_member(self.admin, self.mid, "withdrawal")
         app = self.page("admin", self.admin)
+        app.session_state.admin_active_tab = "회원·점수"
+        app.run()
         app.selectbox(key="admin_member_id").select(self.mid).run()
         self.widget(app, "text_input", "복귀 사유").set_value("welcome back")
         self.widget(app, "button", "회원 복귀 처리").click().run()

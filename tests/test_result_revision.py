@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 
 from roly.core import Core
@@ -275,6 +276,9 @@ class ResultRevisionTests(unittest.TestCase):
 
 
 class ResultRevisionUITests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(native_blocks())
+
     def test_native_dialog_requires_confirmation_and_keeps_void_history(self):
         from streamlit.testing.v1 import AppTest
         from roly.ui import services
@@ -319,6 +323,9 @@ class ResultRevisionUITests(unittest.TestCase):
                 self.assertEqual(sum(g["status"] == "PENDING" for g in comp.get_event(event_id)["games"]), 2)
                 voided = [g for g in core.list_games() if g["status"] == "VOID" and str(g["tournament_id"]) == str(event_id)]
                 self.assertEqual(len(voided), 2)
+                app.session_state["events_detail_tab_AUCTION"] = "전체 경기 이력"
+                app.run()
+                self.assertFalse(app.exception, [e.message for e in app.exception])
                 history = next(t.value for t in app.dataframe if "진행자" in t.value.columns)
                 self.assertEqual(sum(history["상태"] == "무효"), 2)
                 self.assertTrue(all("팀" in name for name in history.loc[history["상태"] == "무효", "승리팀"]))

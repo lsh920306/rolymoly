@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
@@ -21,6 +22,9 @@ def replay_label(app, label):
 
 
 class EventPickerTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(native_blocks())
+
     def test_auction_page_duplicate_titles_have_distinct_native_wire_values(self):
         from roly.core import Core
         from roly.competition import Competition
@@ -159,6 +163,8 @@ st.text_input("Other interaction", key="other")
             self.assertEqual(app.selectbox(key="events_selection_AUCTION").value, target)
             self.assertEqual(comp.get_event(newer)["games"], [])
             core_game_id = comp.get_event(target)["games"][0]["core_game_id"]
+            app.session_state["events_detail_tab_AUCTION"] = "전체 경기 이력"
+            app.run()
             app.selectbox(key="events_history_detail_AUCTION").select(core_game_id).run()
             self.assertEqual(app.selectbox(key="events_selection_AUCTION").value, target)
             self.assertTrue(any("경기 직전 점수" in table.value.columns for table in app.dataframe))

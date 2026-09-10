@@ -11,6 +11,7 @@ from streamlit.testing.v1 import AppTest
 
 from roly.core import Core
 from roly.competition import Competition, ROLES
+from roly.lounge import Lounge
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -188,7 +189,9 @@ class HomeUITests(unittest.TestCase):
                     active_ids[kind].append(event_id)
                 elif status == "COMPLETED":
                     complete_ids.append(event_id)
-        with patch.object(Competition, "list_events", return_value=summaries), patch.object(
+        summary = Lounge(self.core).home_summary(datetime.now(KST))
+        summary["active_events"] = [event for event in summaries if event['status'] not in ('COMPLETED', 'CANCELLED')]
+        with patch.object(Lounge, "home_summary", return_value=summary), patch.object(
             Competition, "get_event", side_effect=AssertionError("home must use saved event summaries")
         ):
             self.at.run()
@@ -205,7 +208,7 @@ class HomeUITests(unittest.TestCase):
         expected = {*active_ids["NORMAL"], *active_ids["AUCTION"]}
         self.assertEqual(set(shown), {f"home_event_{event_id}" for event_id in expected})
         self.assertEqual(len(shown), len(expected))
-        for title in ("일반 내전 만들기", "경매 내전 만들기", "내전 목록"):
+        for title in ("일반 내전", "경매 내전", "내전 목록"):
             self.assertEqual([item.value for item in self.at.subheader].count(title), 1)
         self.assertNotIn("경매 일정", [item.value for item in self.at.subheader])
 

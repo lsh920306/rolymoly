@@ -1,6 +1,7 @@
 """Saved clan profile, independent of match rules."""
 from contextlib import closing
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+import json
 from urllib.parse import urlsplit
 
 from roly.core import integer, now
@@ -27,6 +28,57 @@ class Lounge:
     def profile(self):
         with closing(self.core.connect()) as db:
             return dict(db.execute("SELECT * FROM clan_profile WHERE id=1").fetchone())
+
+    def home_summary(self, current_time):
+        """Read only the public event/history fields displayed on the lounge.
+
+        Core writes played_at as fixed-width UTC ISO text. UTC bounds therefore
+        preserve the Korean calendar month without downloading every game or
+        parsing historical archive payloads that will never be displayed.
+        """
+        if current_time.tzinfo is None:
+            raise ValueError("시간대가 포함된 기준 시각이 필요합니다.")
+        korean = current_time.astimezone(timezone(timedelta(hours=9)))
+        start = korean.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = (start.replace(year=start.year + 1, month=1) if start.month == 12
+               else start.replace(month=start.month + 1))
+        bounds = tuple(stamp.astimezone(timezone.utc).isoformat(timespec="microseconds")
+                       for stamp in (start, end))
+        with self.core.read_snapshot() as db:
+            active = [dict(row) for row in db.execute("""SELECT
+                e.id,e.title,e.kind,e.team_count,e.format,e.status,e.starts_at,e.created_at,
+                (SELECT COUNT(*) FROM competition_players p
+                 WHERE p.event_id=e.id AND p.participation_status='SELECTED') AS participant_count
+                FROM competition_events e WHERE e.status NOT IN ('COMPLETED','CANCELLED')
+                ORDER BY e.id DESC""")]
+            recent = [dict(row) for row in db.execute("""SELECT id,kind,played_at,winner
+                FROM games WHERE status='CONFIRMED' ORDER BY played_at DESC,id DESC LIMIT 5""")]
+            count = db.execute("""SELECT COUNT(*) FROM games
+                WHERE status='CONFIRMED' AND played_at>=? AND played_at<?""", bounds).fetchone()[0]
+            labels = {}
+            if recent:
+                from .competition import _table_exists
+                ids = tuple(game['id'] for game in recent)
+                marks = ','.join('?' for _ in ids)
+                if _table_exists(db, 'competition_game_archives'):
+                    for row in db.execute(f"""SELECT a.core_game_id,a.event_id,a.snapshot,e.title
+                        FROM competition_game_archives a JOIN competition_events e ON e.id=a.event_id
+                        WHERE a.core_game_id IN ({marks}) ORDER BY a.id""", ids):
+                        saved = json.loads(row['snapshot'])
+                        labels[row['core_game_id']] = {
+                            'core_game_id': row['core_game_id'], 'event_id': row['event_id'],
+                            'title': row['title'], 'team_a_name': saved['team_a_name'],
+                            'team_b_name': saved['team_b_name'], 'winner_name': saved['winner_name']}
+                rows = db.execute(f"""SELECT g.core_game_id,g.event_id,e.title,
+                    a.name AS team_a_name,b.name AS team_b_name,w.name AS winner_name
+                    FROM competition_games g JOIN competition_events e ON e.id=g.event_id
+                    LEFT JOIN competition_teams a ON a.id=g.team_a
+                    LEFT JOIN competition_teams b ON b.id=g.team_b
+                    LEFT JOIN competition_teams w ON w.id=g.winner_team_id
+                    WHERE g.core_game_id IN ({marks})""", ids)
+                labels.update({row['core_game_id']: dict(row) for row in rows})
+            return {'active_events': active, 'recent_games': recent,
+                    'month_game_count': count, 'game_labels': labels}
 
     def update_profile(self, token, *, name, description='', founded_on='', capacity=None, contact_url='', expected_updated_at=None):
         """Save a reviewed version; an already applied payload is a harmless retry."""

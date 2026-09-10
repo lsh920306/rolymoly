@@ -13,6 +13,8 @@ from contextlib import closing
 from datetime import datetime, timezone
 from uuid import UUID
 
+from .member_ranks import RANK_SELECT, RANK_JOINS, project_member
+
 
 ROLES = ("TOP", "JG", "MID", "AD", "SUP")
 CREATION_REQUESTS_DDL = """
@@ -198,12 +200,16 @@ class Competition:
         return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
     def _roster_token(self, conn, event_id):
-        event = self._event(conn, event_id)
-        players = list(conn.execute("SELECT * FROM competition_players WHERE event_id=? ORDER BY id", (event_id,)))
-        teams = list(conn.execute("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event_id,)))
+        return self._roster_snapshot(conn, event_id)["token"]
+
+    def _roster_snapshot(self, conn, event_id, event=None):
+        event = event if event is not None else self._event(conn, event_id)
+        players = [dict(row) for row in conn.execute("SELECT * FROM competition_players WHERE event_id=? ORDER BY id", (event_id,))]
+        teams = [dict(row) for row in conn.execute("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event_id,))]
         games = [dict(row) for row in conn.execute("SELECT * FROM competition_games WHERE event_id=? ORDER BY id", (event_id,))]
         audit_id = conn.execute("SELECT COALESCE(MAX(id),0) FROM competition_audit WHERE event_id=?", (event_id,)).fetchone()[0]
-        return self._roster_digest(event, players, teams, games, audit_id)
+        return {"players": players, "teams": teams, "games": games,
+                "token": self._roster_digest(event, players, teams, games, audit_id)}
 
     def _check_roster_token(self, conn, event_id, expected):
         if expected is not None and (not isinstance(expected, str) or expected != self._roster_token(conn, event_id)):
@@ -215,6 +221,10 @@ class Competition:
 
     def _player_snapshot(self, conn, member_id, role=None):
         member = self.service.get_member(int(member_id), conn=conn)
+        return self._snapshot_member(member, member_id, role)
+
+    @staticmethod
+    def _snapshot_member(member, member_id, role=None):
         if not member or str(member["status"]).upper() != "APPROVED":
             raise ValueError("승인된 회원만 참가할 수 있습니다.")
         selected_role = role or member.get("main_role") or member.get("primary_role")
@@ -226,6 +236,34 @@ class Competition:
                 "clan_tier_snapshot": member.get("clan_tier", ""),
                 "current_tier_snapshot": member.get("current_tier", ""),
                 "current_tier_lp_snapshot": member.get("current_tier_lp")}
+
+    def _player_snapshots(self, conn, assignments):
+        """Read only roster fields in one statement, preserving submitted order."""
+        assignments = list(assignments)
+        ids = list(dict.fromkeys(int(item["member_id"]) for item in assignments))
+        if not ids:
+            return []
+        query = """SELECT m.id,m.riot_id,m.status,m.main_role,m.sub_role,m.clan_tier,
+            m.base_score+COALESCE((SELECT SUM(s.amount) FROM score_ledger s WHERE s.member_id=m.id),0) AS score,
+            """ + RANK_SELECT + " FROM members m" + RANK_JOINS + " WHERE m.id IN (" + ",".join("?" for _ in ids) + ")"
+        members = {row["id"]: project_member(row) for row in conn.execute(query, tuple(ids))}
+        if any(member_id not in members for member_id in ids):
+            raise ValueError("회원을 찾을 수 없습니다.")
+        return [self._snapshot_member(members[int(item["member_id"])], item["member_id"], item["role"]) for item in assignments]
+
+    @staticmethod
+    def _check_balance_inputs(expected, actual):
+        if expected != actual:
+            raise ValueError("팀 편성 계산 중 참가자·전력·배정 상태가 변경되었습니다. 최신 명단에서 다시 편성해 주세요.")
+
+    @staticmethod
+    def _write_statements(conn, statements):
+        # Reuse the caller's transaction; never commit a partial roster.
+        if hasattr(conn, "execute_batch"):
+            conn.execute_batch(statements)
+        else:
+            for query, parameters in statements:
+                conn.execute(query, parameters)
 
     def _new_event(self, conn, actor, title, kind, format_name, status):
         if format_name not in ("SINGLE", "LEAGUE", "TOURNAMENT", "GROUP_STAGE", "RANKING"):
@@ -242,22 +280,26 @@ class Competition:
                             (title, kind, format_name, status, actor["id"], _now(), json.dumps(snapshot, ensure_ascii=False))).lastrowid
 
     def _insert_player(self, conn, event_id, player, team_id=None, price=0):
-        conn.execute("INSERT INTO competition_players(event_id,member_id,riot_id,role,score,team_id,price,state,main_role_snapshot,sub_role_snapshot,clan_tier_snapshot,current_tier_snapshot,current_tier_lp_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                     (event_id, player["member_id"], player["riot_id"], player["role"], player["score"],
+        conn.execute(*self._insert_player_statement(event_id, player, team_id, price))
+
+    @staticmethod
+    def _insert_player_statement(event_id, player, team_id=None, price=0):
+        return ("INSERT INTO competition_players(event_id,member_id,riot_id,role,score,team_id,price,state,main_role_snapshot,sub_role_snapshot,clan_tier_snapshot,current_tier_snapshot,current_tier_lp_snapshot) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (event_id, player["member_id"], player["riot_id"], player["role"], player["score"],
                       team_id, price, "ASSIGNED" if team_id else "AVAILABLE",
                       player.get("main_role_snapshot"), player.get("sub_role_snapshot"),
                       player.get("clan_tier_snapshot"), player.get("current_tier_snapshot"), player.get("current_tier_lp_snapshot")))
 
     def create_normal(self, token, assignments, title="", balanced=True, format_name="LEAGUE", request_key=None):
-        with self.service.transaction() as conn:
+        assignments = [{"member_id": int(p["member_id"]), "role": p["role"]} for p in assignments]
+        body = {"flow": "normal", "assignments": assignments, "title": str(title).strip(),
+                "balanced": bool(balanced), "format": format_name}
+        with self.service.read_snapshot() as conn:
             actor = self._authorize(conn, token)
-            assignments = [{"member_id": int(p["member_id"]), "role": p["role"]} for p in assignments]
-            key, fingerprint, receipt = self._creation_request(conn, actor, "NORMAL",
-                {"flow": "normal", "assignments": assignments, "title": str(title).strip(),
-                 "balanced": bool(balanced), "format": format_name}, request_key)
+            key, fingerprint, receipt = self._creation_request(conn, actor, "NORMAL", body, request_key)
             if receipt is not None:
                 return receipt
-            players = [self._player_snapshot(conn, p["member_id"], p["role"]) for p in assignments]
+            players = self._player_snapshots(conn, assignments)
             if len(players) not in (10, 20):
                 raise ValueError("일반내전은 10명 또는 20명을 선택해 주세요.")
             if len({p["member_id"] for p in players}) != len(players):
@@ -270,15 +312,24 @@ class Competition:
                 format_name = "SINGLE"
             elif format_name not in ("LEAGUE", "TOURNAMENT"):
                 raise ValueError("20인 일반내전은 풀리그 또는 토너먼트를 선택해 주세요.")
-            teams = balance_teams(players) if balanced else [[bucket[i] for bucket in buckets] for i in range(count)]
+        # Close the read transaction and return its connection before CPU work.
+        teams = balance_teams(players) if balanced else [[bucket[i] for bucket in buckets] for i in range(count)]
+        with self.service.transaction() as conn:
+            actor = self._authorize(conn, token)
+            key, fingerprint, receipt = self._creation_request(conn, actor, "NORMAL", body, request_key)
+            if receipt is not None:
+                return receipt
+            self._check_balance_inputs(players, self._player_snapshots(conn, assignments))
             event_id = self._new_event(conn, actor, title, "NORMAL", format_name, "READY")
             conn.execute("UPDATE competition_events SET build_mode=?,team_count=? WHERE id=?", ("BALANCE" if balanced else "MANUAL", count, event_id))
             team_ids = []
+            statements = []
             for i, members in enumerate(teams):
                 team_id = conn.execute("INSERT INTO competition_teams(event_id,name) VALUES(?,?)", (event_id, f"{i + 1}팀")).lastrowid
                 team_ids.append(team_id)
                 for player in members:
-                    self._insert_player(conn, event_id, player, team_id)
+                    statements.append(self._insert_player_statement(event_id, player, team_id))
+            self._write_statements(conn, statements)
             self._make_schedule(conn, event_id, team_ids, format_name)
             self._audit(conn, event_id, actor, "CREATE", f"{len(players)}인 일반내전, {format_name}")
             self._save_creation_request(conn, actor, event_id, "NORMAL", key, fingerprint)
@@ -291,18 +342,10 @@ class Competition:
             raise ValueError("명단 변경 사유를 1~1,000자로 입력해 주세요.")
         if not expected_roster_token:
             raise ValueError("최신 명단을 불러온 뒤 다시 저장해 주세요.")
-        with self.service.transaction() as conn:
-            actor = self._authorize(conn, token, event_id)
-            event = self._event(conn, event_id)
-            if event["kind"] != "NORMAL" or event["status"] != "READY":
-                raise ValueError("첫 경기 전의 일반내전 명단만 다시 편성할 수 있습니다.")
-            self._check_roster_token(conn, event_id, expected_roster_token)
-            self._guard_live(conn, event_id)
-            if conn.execute("SELECT 1 FROM games WHERE tournament_id=? LIMIT 1", (str(event_id),)).fetchone() or conn.execute("SELECT 1 FROM competition_games WHERE event_id=? AND (core_game_id IS NOT NULL OR status NOT IN ('PENDING','BYE')) LIMIT 1", (event_id,)).fetchone():
-                raise ValueError("실제 경기 이력이 있는 일반내전은 명단을 다시 편성할 수 없습니다.")
-            if conn.execute("SELECT 1 FROM award_batches WHERE event_id=?", (str(event_id),)).fetchone():
-                raise ValueError("보상이 확정된 행사 명단은 변경할 수 없습니다.")
-            players = [self._player_snapshot(conn, item["member_id"], item["role"]) for item in assignments]
+        assignments = [{"member_id": int(item["member_id"]), "role": item["role"]} for item in assignments]
+        with self.service.read_snapshot() as conn:
+            actor, event, snapshot = self._replacement_inputs(conn, token, event_id, expected_roster_token)
+            players = self._player_snapshots(conn, assignments)
             count = event["team_count"]
             if count not in (2, 4) or len(players) != count * 5 or len({p["member_id"] for p in players}) != len(players):
                 raise ValueError(f"기존 정원 {count * 5}명에 맞게 중복 없이 참가자를 선택해 주세요.")
@@ -313,27 +356,47 @@ class Competition:
                 balanced = event["build_mode"] == "BALANCE"
             if not isinstance(balanced, bool):
                 raise ValueError("팀 균형 적용 여부를 확인해 주세요.")
-            teams = balance_teams(players) if balanced else [[bucket[index] for bucket in buckets] for index in range(count)]
-            before = {"players": [dict(row) for row in conn.execute("SELECT * FROM competition_players WHERE event_id=? ORDER BY id", (event_id,))],
-                      "teams": [dict(row) for row in conn.execute("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event_id,))],
-                      "games": [dict(row) for row in conn.execute("SELECT * FROM competition_games WHERE event_id=? ORDER BY id", (event_id,))],
+        teams = balance_teams(players) if balanced else [[bucket[index] for bucket in buckets] for index in range(count)]
+        with self.service.transaction() as conn:
+            actor, event, snapshot = self._replacement_inputs(conn, token, event_id, expected_roster_token)
+            self._check_balance_inputs(players, self._player_snapshots(conn, assignments))
+            before = {"players": snapshot["players"], "teams": snapshot["teams"], "games": snapshot["games"],
                       "build_mode": event["build_mode"]}
             # Pending bracket links reference one another. Clear links before
             # deleting only this unplayed event's fixtures and team snapshots.
-            conn.execute("UPDATE competition_games SET source_a=NULL,source_b=NULL WHERE event_id=?", (event_id,))
-            conn.execute("DELETE FROM competition_games WHERE event_id=?", (event_id,))
-            conn.execute("DELETE FROM competition_players WHERE event_id=?", (event_id,))
-            conn.execute("DELETE FROM competition_teams WHERE event_id=?", (event_id,))
+            self._write_statements(conn, [
+                ("UPDATE competition_games SET source_a=NULL,source_b=NULL WHERE event_id=?", (event_id,)),
+                ("DELETE FROM competition_games WHERE event_id=?", (event_id,)),
+                ("DELETE FROM competition_players WHERE event_id=?", (event_id,)),
+                ("DELETE FROM competition_teams WHERE event_id=?", (event_id,))])
             team_ids = []
+            statements = []
             for index, roster in enumerate(teams):
                 team_id = conn.execute("INSERT INTO competition_teams(event_id,name) VALUES(?,?)", (event_id, f"{index + 1}팀")).lastrowid
                 team_ids.append(team_id)
                 for player in roster:
-                    self._insert_player(conn, event_id, player, team_id)
+                    statements.append(self._insert_player_statement(event_id, player, team_id))
+            self._write_statements(conn, statements)
             self._make_schedule(conn, event_id, team_ids, event["format"])
             conn.execute("UPDATE competition_events SET build_mode=?,current_player_id=NULL,winner_team_id=NULL WHERE id=?", ("BALANCE" if balanced else "MANUAL", event_id))
             self._audit(conn, event_id, actor, "NORMAL_ROSTER_REPLACE", json.dumps({"reason": reason, "before": before, "after": players, "balanced": balanced}, ensure_ascii=False))
         return event_id
+
+    def _replacement_inputs(self, conn, token, event_id, expected_roster_token):
+        actor = self._authorize(conn, token, event_id)
+        event = self._event(conn, event_id)
+        if event["kind"] != "NORMAL" or event["status"] != "READY":
+            raise ValueError("첫 경기 전의 일반내전 명단만 다시 편성할 수 있습니다.")
+        snapshot = self._roster_snapshot(conn, event_id, event)
+        if expected_roster_token != snapshot["token"]:
+            raise ValueError("다른 화면에서 명단이나 진행 상태가 변경되었습니다. 최신 명단을 불러온 뒤 다시 확인해 주세요.")
+        self._guard_live(conn, event_id)
+        if conn.execute("SELECT 1 FROM games WHERE tournament_id=? LIMIT 1", (str(event_id),)).fetchone() or any(
+                game["core_game_id"] is not None or game["status"] not in ("PENDING", "BYE") for game in snapshot["games"]):
+            raise ValueError("실제 경기 이력이 있는 일반내전은 명단을 다시 편성할 수 없습니다.")
+        if conn.execute("SELECT 1 FROM award_batches WHERE event_id=?", (str(event_id),)).fetchone():
+            raise ValueError("보상이 확정된 행사 명단은 변경할 수 없습니다.")
+        return actor, event, snapshot
 
     def create_auction(self, token, member_ids, captain_ids, title="", format_name="LEAGUE"):
         with self.service.transaction() as conn:

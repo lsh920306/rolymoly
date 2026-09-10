@@ -5,6 +5,7 @@ import sqlite3
 from tempfile import TemporaryDirectory
 from threading import Barrier
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from roly.competition import Competition, ROLES
 
 class NormalSwapConcurrencyTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(native_blocks())
         directory = TemporaryDirectory(prefix="roly-normal-swap-")
         self.addCleanup(directory.cleanup)
         self.core = Core(Path(directory.name) / "isolated.sqlite3")
@@ -130,6 +132,7 @@ class NormalSwapConcurrencyTests(unittest.TestCase):
         app.session_state["db_path"] = self.core.db_path
         app.session_state["token"] = token
         app.session_state["focus_event"] = self.event_id
+        app.session_state["events_detail_tab_NORMAL"] = "일반내전 명단"
         app.run()
         self.assertFalse(app.exception, [item.message for item in app.exception])
         return app

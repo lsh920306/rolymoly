@@ -54,6 +54,30 @@ def _details(title, starts_at, description):
     return title, _start(starts_at), description
 
 
+def _balance_captains(players, teams, count):
+    """Pure search over confirmed snapshots; retain order and tie-breaking."""
+    captain_team = {team["captain_id"]: index for index, team in enumerate(teams)}
+    choices = []
+    for role in ROLES:
+        bucket = [player for player in players if player["role"] == role]
+        if len(bucket) != count:
+            raise ValueError(f"각 포지션에 {count}명씩 배정해 주세요.")
+        choices.append([order for order in itertools.permutations(bucket) if all(
+            player["member_id"] not in captain_team or captain_team[player["member_id"]] == index
+            for index, player in enumerate(order))])
+    if any(not options for options in choices):
+        raise ValueError("팀장 고정과 포지션 조건을 동시에 만족하는 배정이 없습니다.")
+    best_key, best = None, None
+    for columns in itertools.product(*choices):
+        totals = [sum(column[index]["score"] for column in columns) for index in range(count)]
+        key = (max(totals) - min(totals), sum(total * total for total in totals))
+        if best_key is None or key < best_key:
+            best_key, best = key, columns
+        if key[0] == 0:
+            break
+    return best, best_key
+
+
 class TournamentService:
     def __init__(self, core, competition=None):
         self.core = core
@@ -132,20 +156,24 @@ class TournamentService:
             actor, event = self._edit(conn, token, event_id, ("RECRUITING",))
             self.competition._check_roster_token(conn, event_id, expected_roster_token)
             self.competition._guard_live(conn, event_id)
-            players = [self.competition._player_snapshot(conn, item["member_id"], item["role"]) for item in assignments]
+            players = self.competition._player_snapshots(conn, assignments)
             ids = [p["member_id"] for p in players]
             if len(ids) > event["team_count"] * 5 or len(set(ids)) != len(ids):
                 raise ValueError("참가자는 중복 없이 대회 정원 이내로 선택해 주세요.")
-            previous = {p["member_id"] for p in self._players(conn, event_id)}
-            for member_id in previous - set(ids):
-                conn.execute("UPDATE competition_players SET participation_status='EXCLUDED',state='EXCLUDED',exclusion_reason='참가 명단 변경' WHERE event_id=? AND member_id=?", (event_id, member_id))
+            existing = {row["member_id"]: dict(row) for row in conn.execute("SELECT member_id,participation_status FROM competition_players WHERE event_id=?", (event_id,))}
+            previous = {member_id for member_id, row in existing.items() if row["participation_status"] == "SELECTED"}
+            statements = []
+            removed = sorted(previous - set(ids))
+            if removed:
+                statements.append(("UPDATE competition_players SET participation_status='EXCLUDED',state='EXCLUDED',exclusion_reason='참가 명단 변경' WHERE event_id=? AND member_id IN (" + ",".join("?" for _ in removed) + ")", (event_id, *removed)))
             for player in players:
-                row = conn.execute("SELECT participation_status FROM competition_players WHERE event_id=? AND member_id=?", (event_id, player["member_id"])).fetchone()
-                if not row:
-                    self.competition._insert_player(conn, event_id, player)
-                conn.execute("UPDATE competition_players SET riot_id=?,role=?,score=?,main_role_snapshot=?,sub_role_snapshot=?,clan_tier_snapshot=?,current_tier_snapshot=?,current_tier_lp_snapshot=?,participation_status='SELECTED',state='AVAILABLE',team_id=NULL,price=0,exclusion_reason='' WHERE event_id=? AND member_id=?",
+                if player["member_id"] not in existing:
+                    statements.append(self.competition._insert_player_statement(event_id, player))
+                    continue
+                statements.append(("UPDATE competition_players SET riot_id=?,role=?,score=?,main_role_snapshot=?,sub_role_snapshot=?,clan_tier_snapshot=?,current_tier_snapshot=?,current_tier_lp_snapshot=?,participation_status='SELECTED',state='AVAILABLE',team_id=NULL,price=0,exclusion_reason='' WHERE event_id=? AND member_id=?",
                     (player["riot_id"], player["role"], player["score"], player["main_role_snapshot"], player["sub_role_snapshot"],
-                     player["clan_tier_snapshot"], player["current_tier_snapshot"], player["current_tier_lp_snapshot"], event_id, player["member_id"]))
+                     player["clan_tier_snapshot"], player["current_tier_snapshot"], player["current_tier_lp_snapshot"], event_id, player["member_id"])))
+            self.competition._write_statements(conn, statements)
             self._audit(conn, event_id, actor, "PARTICIPANTS", f"참가 명단 {sorted(previous)} → {ids}; 포지션 {[(p['member_id'], p['role']) for p in players]}")
 
     def confirm_participants(self, token, event_id, expected_roster_token=None):
@@ -157,11 +185,13 @@ class TournamentService:
                 raise ValueError(f"참가자 {event['team_count'] * 5}명을 채운 뒤 확정해 주세요.")
             if event["build_mode"] != "AUCTION" and any(sum(p["role"] == r for p in players) != event["team_count"] for r in ROLES):
                 raise ValueError(f"각 포지션에 {event['team_count']}명씩 배정해 주세요.")
-            for p in players:
-                fresh = self.competition._player_snapshot(conn, p["member_id"], p["role"])
-                conn.execute("UPDATE competition_players SET riot_id=?,score=?,main_role_snapshot=?,sub_role_snapshot=?,clan_tier_snapshot=?,current_tier_snapshot=?,current_tier_lp_snapshot=? WHERE id=?",
+            refreshed = self.competition._player_snapshots(conn, players)
+            statements = []
+            for p, fresh in zip(players, refreshed):
+                statements.append(("UPDATE competition_players SET riot_id=?,score=?,main_role_snapshot=?,sub_role_snapshot=?,clan_tier_snapshot=?,current_tier_snapshot=?,current_tier_lp_snapshot=? WHERE id=?",
                     (fresh["riot_id"], fresh["score"], fresh["main_role_snapshot"], fresh["sub_role_snapshot"],
-                     fresh["clan_tier_snapshot"], fresh["current_tier_snapshot"], fresh["current_tier_lp_snapshot"], p["id"]))
+                     fresh["clan_tier_snapshot"], fresh["current_tier_snapshot"], fresh["current_tier_lp_snapshot"], p["id"])))
+            self.competition._write_statements(conn, statements)
             conn.execute("UPDATE competition_events SET participants_confirmed_at=? WHERE id=?", (_now(), event_id))
             self._transition(conn, event, actor, "CAPTAIN_SELECTION", "참가자 및 전력 스냅샷 확정")
 
@@ -182,38 +212,44 @@ class TournamentService:
             self._transition(conn, event, actor, "TEAM_BUILDING", f"팀장 {ids}; 팀장 고정, 팀 배정 초기화")
 
     def auto_balance(self, token, event_id):
+        with self.core.read_snapshot() as conn:
+            actor, event, snapshot, teams, players = self._balance_inputs(conn, token, event_id)
+        best, best_key = _balance_captains(players, teams, event["team_count"])
         with self.core.transaction() as conn:
-            actor, event = self._edit(conn, token, event_id, ("TEAM_BUILDING",))
-            if event["build_mode"] != "BALANCE":
-                raise ValueError("자동 밸런스 방식으로 만든 대회에서 사용해 주세요.")
-            self.competition._guard_live(conn, event_id)
-            teams = [dict(r) for r in conn.execute("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event_id,))]
-            players = self._players(conn, event_id)
-            count = event["team_count"]
-            if len(teams) != count or len(players) != 5 * count:
-                raise ValueError("팀장과 참가 정원을 먼저 확정해 주세요.")
-            captain_team = {t["captain_id"]: i for i, t in enumerate(teams)}
-            choices = []
-            for role in ROLES:
-                bucket = [p for p in players if p["role"] == role]
-                if len(bucket) != count:
-                    raise ValueError(f"각 포지션에 {count}명씩 배정해 주세요.")
-                choices.append([order for order in itertools.permutations(bucket) if all(p["member_id"] not in captain_team or captain_team[p["member_id"]] == i for i, p in enumerate(order))])
-            if any(not options for options in choices):
-                raise ValueError("팀장 고정과 포지션 조건을 동시에 만족하는 배정이 없습니다.")
-            best_key, best = None, None
-            for columns in itertools.product(*choices):
-                totals = [sum(column[i]["score"] for column in columns) for i in range(count)]
-                key = (max(totals) - min(totals), sum(total * total for total in totals))
-                if best_key is None or key < best_key:
-                    best_key, best = key, columns
-                if key[0] == 0:
-                    break
-            conn.execute("UPDATE competition_players SET team_id=NULL,price=0,state='AVAILABLE' WHERE event_id=? AND participation_status='SELECTED'", (event_id,))
+            actor, event, latest, teams, players = self._balance_inputs(conn, token, event_id)
+            self.competition._check_balance_inputs(snapshot["token"], latest["token"])
+            statements = [("UPDATE competition_players SET team_id=NULL,price=0,state='AVAILABLE' WHERE event_id=? AND participation_status='SELECTED'", (event_id,))]
+            counts = [0] * len(teams)
             for column in best:
                 for index, player in enumerate(column):
-                    self.competition._assign(conn, event_id, player["member_id"], teams[index]["id"], 0)
+                    # Every selected player is reset above. Zero-price assignment
+                    # has known destination totals; validate without N rereads.
+                    writes = self.competition._assignment_statements(teams[index], player, 0, counts[index], 0)
+                    statements.append(writes[0])
+                    counts[index] += 1
+            ids = [player["member_id"] for player in players]
+            statements.append(("UPDATE competition_events SET current_player_id=NULL WHERE id=? AND current_player_id IN (" + ",".join("?" for _ in ids) + ")", (event_id, *ids)))
+            self.competition._write_statements(conn, statements)
             self._audit(conn, event_id, actor, "AUTO_BALANCE", f"팀장 고정, 팀 전력 최대 차이 {best_key[0]:g}; 배정 {[[p['member_id'] for p in col] for col in best]}")
+
+    def _balance_inputs(self, conn, token, event_id):
+        actor, event = self._edit(conn, token, event_id, ("TEAM_BUILDING",))
+        if event["build_mode"] != "BALANCE":
+            raise ValueError("자동 밸런스 방식으로 만든 대회에서 사용해 주세요.")
+        self.competition._guard_live(conn, event_id)
+        snapshot = self.competition._roster_snapshot(conn, event_id, event)
+        teams = snapshot["teams"]
+        players = [player for player in snapshot["players"] if player["participation_status"] == "SELECTED"]
+        count = event["team_count"]
+        if count not in (2, 4) or len(teams) != count or len(players) != 5 * count:
+            raise ValueError("팀장과 참가 정원을 먼저 확정해 주세요.")
+        # Preparation deliberately uses the previously confirmed score/role
+        # snapshots. Live membership approval must still hold at persistence.
+        ids = [player["member_id"] for player in players]
+        statuses = list(conn.execute("SELECT id,status FROM members WHERE id IN (" + ",".join("?" for _ in ids) + ")", tuple(ids)))
+        if len(statuses) != len(ids) or any(row["status"] != "APPROVED" for row in statuses):
+            raise ValueError("승인된 회원만 참가할 수 있습니다.")
+        return actor, event, snapshot, teams, players
 
     def assign_player(self, token, event_id, member_id, team_id, role=None):
         with self.core.transaction() as conn:

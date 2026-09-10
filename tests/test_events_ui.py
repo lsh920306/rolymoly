@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class EventsUITests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(native_blocks())
         self.directory = tempfile.TemporaryDirectory(prefix="roly-events-ui-")
         self.environment = patch.dict(os.environ, {"ROLYMOLY_DATA_DIR": self.directory.name})
         self.environment.start()
@@ -42,10 +44,24 @@ class EventsUITests(unittest.TestCase):
         self.assert_clean()
         kind = self.comp.get_event(event_id)["kind"]
         self.assertEqual(self.at.selectbox(key=f"events_selection_{kind}").value, event_id)
+        self.details("결과")
 
     def switch_kind(self, label):
         # AppTest 1.63 exposes tabs as blocks; browser tab clicks set this state.
         self.at.session_state["events_kind_tab"] = label
+        self.at.run()
+        self.assert_clean()
+
+    def details(self, section):
+        label = self.at.session_state["events_kind_tab"]
+        kind = "NORMAL" if label == "일반내전" else "AUCTION"
+        self.at.session_state[f"events_detail_tab_{kind}"] = "전체 경기 이력" if section == "이력" else f"{label} {section}"
+        self.at.run()
+        self.assert_clean()
+
+    def open_audit(self, event_id):
+        self.details("명단")
+        self.at.session_state[f"events_audit_{event_id}"] = True
         self.at.run()
         self.assert_clean()
 
@@ -74,6 +90,7 @@ class EventsUITests(unittest.TestCase):
     def test_swap_result_finalization_named_history_and_public_read(self):
         event = next(item for item in self.comp.list_events() if item["kind"] == "NORMAL" and item["status"] == "READY")
         self.choose(event["id"])
+        self.details("명단")
         before = self.comp.get_event(event["id"])
         first = self.at.selectbox(key=f"events_swap_first_{event['id']}").value
         previous_team = next(p["team_id"] for p in before["players"] if p["member_id"] == first)
@@ -82,6 +99,7 @@ class EventsUITests(unittest.TestCase):
         after = self.comp.get_event(event["id"])
         self.assertNotEqual(next(p["team_id"] for p in after["players"] if p["member_id"] == first), previous_team)
         game = after["games"][0]
+        self.details("결과")
         self.at.button(key=f"events_result_reload_{event['id']}_{game['id']}").click().run()
         self.submit("FormSubmitter:events_result_form_")
         self.assertTrue(self.at.error)
@@ -91,6 +109,7 @@ class EventsUITests(unittest.TestCase):
         self.at.button(key=f"events_finish_{event['id']}").click().run()
         self.assert_clean()
         self.assertEqual(self.comp.get_event(event["id"])["status"], "COMPLETED")
+        self.details("이력")
         self.at.selectbox(key="events_history_detail_NORMAL").select(core_game_id).run()
         self.assert_clean()
         table = next(table.value for table in self.at.dataframe if "경기 직전 점수" in table.value.columns)
@@ -104,6 +123,9 @@ class EventsUITests(unittest.TestCase):
     def test_normal_roster_stale_screen_requires_explicit_reload(self):
         event_id = self.new_normal()
         self.choose(event_id)
+        self.details("명단")
+        self.at.session_state[f"events_roster_editor_{event_id}"] = True
+        self.at.run()
         original = self.comp.get_event(event_id)
         base_key = f"events_roster_base_{event_id}_{self.core.session(self.token)['id']}"
         first, second = [p for p in original["players"] if p["role"] == "TOP"][:2]
@@ -148,6 +170,7 @@ class EventsUITests(unittest.TestCase):
                                  json.dumps(detail, ensure_ascii=False) if isinstance(detail, dict) else detail)
         before = self.comp.get_event(event_id)["audit"]
         self.choose(event_id)
+        self.open_audit(event_id)
         table = next(frame.value for frame in self.at.dataframe if list(frame.value.columns) == ["시각", "작업", "내용"])
         contents = "\n".join(table["내용"])
         for expected in ("낙찰 2명 해제", "42 P 환불", "선수 2명 경매 준비", "선수 #11", "이전 팀 42 P → 정정 팀 0 P",
@@ -288,6 +311,7 @@ class EventsUITests(unittest.TestCase):
         normal = next(event for event in self.comp.list_events() if event["kind"] == "NORMAL" and event["status"] == "COMPLETED")
         self.choose(normal["id"])
         normal_game = self.comp.get_event(normal["id"])["games"][0]["core_game_id"]
+        self.details("이력")
         self.at.selectbox(key="events_history_detail_NORMAL").select(normal_game).run()
         self.assertEqual(self.at.session_state["events_kind_tab"], "일반내전")
         normal_options = self.at.selectbox(key="events_selection_NORMAL").options
@@ -305,18 +329,21 @@ class EventsUITests(unittest.TestCase):
         self.choose(auction_id)
         self.assertEqual(self.at.session_state["events_kind_tab"], "경매")
         self.assertFalse(any(box.key == "events_selection_NORMAL" for box in self.at.selectbox))
+        self.details("이력")
         self.at.selectbox(key="events_history_detail_AUCTION").select(auction_game).run()
         history = next(table.value for table in self.at.dataframe if "경기 번호" in table.value.columns)
         self.assertEqual(set(history["종류"]), {"경매"})
         self.assertEqual(set(history["경기 번호"]), {auction_game})
 
         self.switch_kind("일반내전")
+        self.details("이력")
         self.assertEqual(self.at.selectbox(key="events_selection_NORMAL").value, normal["id"])
         self.assertEqual(self.at.selectbox(key="events_history_detail_NORMAL").value, normal_game)
         normal_history = next(table.value for table in self.at.dataframe if "경기 번호" in table.value.columns)
         self.assertEqual(set(normal_history["종류"]), {"일반내전"})
         self.assertNotIn(auction_game, normal_history["경기 번호"].tolist())
         self.switch_kind("경매")
+        self.details("이력")
         self.assertEqual(self.at.selectbox(key="events_selection_AUCTION").value, auction_id)
         self.assertEqual(self.at.selectbox(key="events_history_detail_AUCTION").value, auction_game)
         self.assertFalse(any(widget.label == "경기 종류" for widget in self.at.get("button_group")))
@@ -365,6 +392,7 @@ class EventsUITests(unittest.TestCase):
         self.assertEqual(self.core.get_game(core_game_id), core_game_before)
         self.assertEqual({member_id: self.core.get_member(member_id)["award_units"] for member_id in member_ids}, award_units_before)
         self.assertTrue(any(row["action"] == "CLOSE_UNFINISHED" and "참가자 이탈" in row["detail"] for row in closed["audit"]))
+        self.open_audit(event_id)
         audit_table = next(table.value for table in self.at.dataframe if list(table.value.columns) == ["시각", "작업", "내용"])
         summary = audit_table.loc[audit_table["작업"] == "기록 보존·중단 종료", "내용"].iloc[0]
         self.assertIn("확정 1경기 보존", summary)
@@ -374,11 +402,13 @@ class EventsUITests(unittest.TestCase):
         self.assertEqual(self.at.session_state["events_kind_tab"], "경매")
 
         self.at.session_state["token"] = None
+        self.details("결과")
         self.at.run()
         self.assert_clean()
         self.assertTrue(any("중단 종료된 경매" in message.value and "우승 보상은 지급하지 않습니다" in message.value for message in self.at.info))
         self.assertTrue(any(table.value["상태"].tolist().count("완료") == 1 for table in self.at.dataframe if "첫 번째 팀" in table.value.columns))
         self.assertFalse(any(button.label == "기록을 보존하고 중단 종료" or (button.key or "").startswith("FormSubmitter:events_result_form_") for button in self.at.button))
+        self.details("이력")
         self.at.selectbox(key="events_history_detail_AUCTION").select(core_game_id).run()
         self.assert_clean()
         roster = next(table.value for table in self.at.dataframe if "경기 직전 점수" in table.value.columns)
@@ -452,6 +482,7 @@ class EventsUITests(unittest.TestCase):
         self.assertEqual(table["상태"].tolist().count("결과 대기"), 2)
         self.assertTrue(any(button.proto.label == "일반내전 결과 CSV 다운로드" for button in self.at.get("download_button")))
         self.assertFalse(any(button.label == "기록을 보존하고 중단 종료" or (button.key or "").startswith("FormSubmitter:events_result_form_") for button in self.at.button))
+        self.details("이력")
         self.at.selectbox(key="events_history_detail_NORMAL").select(core_game_id).run()
         self.assert_clean()
         roster = next(table.value for table in self.at.dataframe if "경기 직전 점수" in table.value.columns)
@@ -474,6 +505,7 @@ class EventsUITests(unittest.TestCase):
         self.assertFalse(any(box.key == "events_selection_NORMAL" for box in self.at.selectbox))
         self.switch_kind("경매")
         self.assertFalse(any(box.key == "events_selection_AUCTION" for box in self.at.selectbox))
+        self.details("이력")
         self.assertTrue(any("저장된 경기 결과가 없습니다" in message.value for message in self.at.info))
 
 

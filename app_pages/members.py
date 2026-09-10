@@ -1,7 +1,14 @@
 import streamlit as st
-from roly.ui import context, heading, member_table, ROLE_NAMES, award_label
+from roly.ui import context, deferred_csv, heading, member_table, ROLE_NAMES, award_label
 from roly.member_records import saved_tier
 from roly.riot_profile import member_profiles
+
+
+def export_rows(members):
+    table = member_table(members)
+    table["주력 챔피언"] = [", ".join(champion["name"] for champion in (member.get("riot_profile") or {}).get("champions", [])) or "미조회" for member in members]
+    return table.to_dict("records")
+
 
 core, competition, token, actor = context()
 heading("회원", "회원별 클랜·현재 티어, 포지션, 전력점수, 일반내전 전적과 우승 업적을 조회합니다.")
@@ -20,9 +27,8 @@ filtered = [m for m in members if search.strip().casefold() in m["riot_id"].case
 can_edit = bool(actor and actor["role"] == "admin")
 with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
     st.markdown(f"**회원 {len(filtered)}명**")
-    table = member_table(filtered)
-    table["주력 챔피언"] = [", ".join(champion["name"] for champion in (member.get("riot_profile") or {}).get("champions", [])) or "미조회" for member in filtered]
-    st.download_button("목록 다운로드", core.csv_bytes(table.to_dict("records")), "클랜원.csv", "text/csv", icon=":material/download:")
+    st.download_button("목록 다운로드", deferred_csv(core, lambda members=tuple(filtered): export_rows(members)),
+                       "클랜원.csv", "text/csv", icon=":material/download:", on_click="ignore")
 if filtered:
     widths = [2.1, 0.7, 0.7, 1.05, 1.3, 0.85, 1.25, 1.05, 3.0 if can_edit else 1.5]
     labels = ("회원", "주포지션", "부포지션", "클랜 티어", "현재 티어", "전력점수", "일반내전", "우승 기호", "프로필 · 관리" if can_edit else "프로필")

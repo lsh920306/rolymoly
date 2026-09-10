@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AppUITests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(native_blocks())
         self.temporary = tempfile.TemporaryDirectory(prefix="roly-ui-test-")
         self.environment = patch.dict(os.environ, {"ROLYMOLY_DATA_DIR": self.temporary.name})
         self.environment.start()
@@ -97,6 +99,7 @@ class AppUITests(unittest.TestCase):
         self.assertIn("UI신청회원#KR1", " ".join(item.value for item in self.app.text))
 
     def test_recovery_identity_confirmation_is_bound_to_selected_account(self):
+        self.app.session_state.admin_active_tab = "운영 계정"
         self.page("admin")
         accounts = [row for row in self.core.list_accounts(self.token) if row["role"] == "member"]
         self.assertGreaterEqual(len(accounts), 2)
@@ -212,6 +215,7 @@ class AppUITests(unittest.TestCase):
         self.assertEqual(live.get_state(event_id)["bids"][0]["amount"], 5)
 
     def test_admin_adjustments_awards_policy_accounts_and_access(self):
+        self.app.session_state.admin_active_tab = "회원·점수"
         self.page("admin")
         self.assertEqual(len(self.app.tabs), 6)
         member = self.core.list_members()[0]
@@ -225,9 +229,13 @@ class AppUITests(unittest.TestCase):
         self.widget("text_input", "점수 보정 사유").set_value("UI 점수 보정 검증")
         self.click("점수 보정 적용")
         self.assertEqual(self.core.get_member(member["id"])["score"], member["score"] + 25)
+        self.app.session_state.admin_active_tab = "점수 정책"
+        self.app.run()
         self.widget("number_input", "승패 공통 증감량").set_value(12)
         self.click("점수 정책 저장")
         self.assertEqual((self.core.policy()["mode"], self.core.policy()["k"]), ("fixed", 12))
+        self.app.session_state.admin_active_tab = "업적 관리"
+        self.app.run()
         self.widget("multiselect", "업적을 조정할 회원").set_value([member["id"]])
         self.widget("selectbox", "업적 종류").set_value("별")
         self.widget("number_input", "회원 1명당 개수").set_value(2)
@@ -237,6 +245,7 @@ class AppUITests(unittest.TestCase):
         registered = self.core.register_member("uiorganizer", "ui-test-password-123", "UIOrganizer#QA",
             "TOP", "JG", request_key=str(uuid4()))
         self.core.approve_member(self.token, registered["member_id"], 100)
+        self.app.session_state.admin_active_tab = "운영 계정"
         self.app.run()
         self.app.selectbox(key="admin_account_id").set_value(registered["account_id"]).run()
         self.widget("selectbox", "변경할 권한").set_value("organizer")
@@ -246,6 +255,8 @@ class AppUITests(unittest.TestCase):
         self.assertEqual(account["role"], "organizer")
         self.assertEqual(account["id"], registered["account_id"])
         self.assertEqual(account["member_id"], registered["member_id"])
+        self.app.session_state.admin_active_tab = "변경 기록"
+        self.app.run()
         self.assertTrue(self.app.get("download_button"))
         self.app.session_state["token"] = self.core.login("uiorganizer", "ui-test-password-123")
         self.app.run()
@@ -260,6 +271,7 @@ class MemberAwardDisplayTests(unittest.TestCase):
     """Check display against normalized balances returned by the real award ledger."""
 
     def setUp(self):
+        self.enterContext(native_blocks())
         self.temporary = tempfile.TemporaryDirectory(prefix="roly-award-display-test-")
         self.addCleanup(self.temporary.cleanup)
         self.core = Core(Path(self.temporary.name) / "awards.sqlite3")

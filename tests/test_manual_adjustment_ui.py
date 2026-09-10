@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
+from tests.test_native_blocks import native_blocks
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -34,6 +35,7 @@ class ManualAdjustmentUITests(unittest.TestCase):
         cls.base._keeper.close()
 
     def setUp(self):
+        self.enterContext(native_blocks())
         temporary = TemporaryDirectory(prefix="roly-manual-ui-")
         self.addCleanup(temporary.cleanup)
         environment = patch.dict(os.environ, {"ROLYMOLY_DATA_DIR": temporary.name})
@@ -62,6 +64,9 @@ class ManualAdjustmentUITests(unittest.TestCase):
         return found[0]
 
     def prepare(self, app, kind):
+        app.session_state.admin_active_tab = "회원·점수" if kind == "score" else "업적 관리"
+        app.run()
+        self.healthy(app)
         if kind == "score":
             app.selectbox(key="admin_member_id").select(self.mid).run()
             self.widget(app, "number_input", "점수 보정량").set_value(7)

@@ -16,16 +16,13 @@ today = datetime.now(KST)
 is_admin = bool(actor and actor["role"] == "admin")
 members = core.list_members(include_pending=is_admin)
 approved = [member for member in members if member["status"] == "APPROVED"]
-events = competition.list_events()
-active = [event for event in events if event["status"] not in ("COMPLETED", "CANCELLED")]
+summary = lounge.home_summary(today)
+active = summary["active_events"]
 normal = [event for event in active if event["kind"] == "NORMAL"]
 active_auction_count = sum(event["kind"] == "AUCTION" for event in active)
-confirmed_games = [game for game in core.list_games() if game["status"] == "CONFIRMED"]
-confirmed_games.sort(key=lambda game: local_time(game["played_at"]) or datetime.min.replace(tzinfo=KST), reverse=True)
-month_games = sum(
-    bool((played := local_time(game["played_at"])) and (played.year, played.month) == (today.year, today.month))
-    for game in confirmed_games
-)
+confirmed_games = summary["recent_games"]
+month_games = summary["month_game_count"]
+game_names = summary["game_labels"]
 
 
 def event_row(event):
@@ -89,7 +86,7 @@ with st.container(horizontal=True, horizontal_alignment="center"):
 
         main, side = st.columns([2.1, 1], gap="medium")
         with main:
-            for kind, label in (("NORMAL", "일반 내전 만들기"), ("AUCTION", "경매 내전 만들기")):
+            for kind, label in (("NORMAL", "일반 내전"), ("AUCTION", "경매 내전")):
                 with st.container(border=True, gap="small", key=f"lounge_{kind.lower()}"):
                     with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
                         st.subheader(label, width="content")
@@ -129,7 +126,6 @@ with st.container(horizontal=True, horizontal_alignment="center"):
                 st.subheader("최근 경기")
                 if not confirmed_games:
                     st.caption("확정된 경기 기록이 없습니다.")
-                game_names = competition.game_labels()
                 for game in confirmed_games[:5]:
                     labels = game_names.get(game["id"], {})
                     team_a, team_b = labels.get("team_a_name") or "A팀", labels.get("team_b_name") or "B팀"

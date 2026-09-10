@@ -1,11 +1,23 @@
 """Riot refresh controls; HTTP only runs in the independent queue worker."""
 from hashlib import sha256
 import sqlite3
+from time import monotonic
 
 import streamlit as st
 
 from .riot_api import load_riot_config, RiotConfig
 from .storage_config import ConfigError
+
+
+IDLE_CHECK_SECONDS = 30
+PENDING_STATES = frozenset({"QUEUED", "RUNNING", "RETRY", "PENDING"})
+POLL_CACHE_LIMIT = 16
+
+
+def _refresh_requested(cache_key):
+    # A button callback precedes rendering, so revoked sessions also get a
+    # freshly disabled button instead of reusing the idle display permission.
+    st.session_state.get("_riot_poll_cache", {}).pop(cache_key, None)
 
 
 def _rate_core(path):
@@ -86,10 +98,27 @@ def refresh_control(core, token, member_ids, *, key, label="Riot 정보 갱신",
         _cached_details(core, ids, show_details)
         return
     try:
-        actor = core.session(token)
-        allowed = bool(actor and (actor["role"] in ("admin", "organizer") or actor.get("member_status") == "APPROVED"))
+        context = sha256(repr((str(core.db_path), token, ids)).encode()).hexdigest()
+        cache_key = f"riot_poll_{key}"
+        cache = st.session_state.setdefault("_riot_poll_cache", {})
+        cached = cache.get(cache_key)
+        if not isinstance(cached, dict) or cached.get("context") != context:
+            cached = None
+        checked_at = monotonic()
+        due = cached is None or cached["pending"] or checked_at - cached["checked_at"] >= IDLE_CHECK_SECONDS
+        actor = core.session(token) if due else None
+        allowed = (bool(actor and (actor["role"] in ("admin", "organizer") or actor.get("member_status") == "APPROVED"))
+                   if due else cached["allowed"])
         refresh = st.button(label, key=f"riot_refresh_{key}", disabled=not allowed,
+                            on_click=_refresh_requested, args=(cache_key,),
                             icon=":material/sync:", help="버튼을 누를 때만 조회합니다. 최근 5분 이내 요청은 재사용하며 전력점수와 클랜 티어는 유지됩니다.")
+        if refresh and not due:
+            # Cached permission controls presentation only. Every click is
+            # checked against the current session before a job can be queued.
+            actor = core.session(token)
+            allowed = bool(actor and (actor["role"] in ("admin", "organizer") or actor.get("member_status") == "APPROVED"))
+            if not allowed:
+                st.caption("로그인 상태를 확인한 뒤 다시 갱신해 주세요.")
         if refresh and allowed:
             queued = 0
             for start in range(0, len(ids), 40):
@@ -97,11 +126,19 @@ def refresh_control(core, token, member_ids, *, key, label="Riot 정보 갱신",
             from .riot_sync import start_worker
             start_worker(core, sync.config, sync=sync)
             st.caption(f"{queued}명 갱신 예약 · 5분 이내 요청은 재사용합니다.")
-        profiles = {}
-        for start in range(0, len(ids), 40):
-            profiles.update(sync.get_profiles(ids[start:start + 40]))
+        if due or refresh:
+            profiles = {}
+            for start in range(0, len(ids), 40):
+                profiles.update(sync.get_profiles(ids[start:start + 40]))
+            cache.pop(cache_key, None)
+            cache[cache_key] = {"context": context, "checked_at": checked_at, "profiles": profiles,
+                "allowed": allowed, "pending": any(value.get("status") in PENDING_STATES for value in profiles.values())}
+            while len(cache) > POLL_CACHE_LIMIT:
+                cache.pop(next(iter(cache)))
+        else:
+            profiles = cached["profiles"]
         ready = sum(bool(value.get("fetched_at") and value.get("current_tier")) for value in profiles.values())
-        pending = sum(value.get("status") in ("QUEUED", "RUNNING", "RETRY", "PENDING") for value in profiles.values())
+        pending = sum(value.get("status") in PENDING_STATES for value in profiles.values())
         errors = {value.get("error") for value in profiles.values()} - {None, ""}
         if len(ids) == 1:
             st.caption("Riot 정보 갱신 대기 중입니다." if pending else "솔로·자유랭크 · 숙련도 상위 5개" if ready else "아직 Riot 조회 전입니다.")
@@ -120,7 +157,7 @@ def refresh_control(core, token, member_ids, *, key, label="Riot 정보 갱신",
                          show_updated=False)
         # Refresh the member table/preparation roster once a new cache arrives.
         signature = tuple((mid, value.get("updated_at")) for mid, value in sorted(profiles.items()))
-        previous = st.session_state.get(f"riot_display_{key}")
+        previous = st.session_state.get(f"riot_display_{key}") if cached is not None else None
         st.session_state[f"riot_display_{key}"] = signature
         if rerun_on_update and previous is not None and signature != previous:
             st.rerun()
@@ -153,15 +190,17 @@ def member_refresh_picker(core, token, members, *, key):
         st.caption("Riot 갱신 서버에 연결하지 못했습니다. 저장된 회원 정보는 계속 사용할 수 있습니다.")
         return
     choices = {member.get("member_id", member.get("id")): member["riot_id"] for member in members}
-    with st.expander("Riot 정보 확인"):
-        selected_id = st.selectbox("조회할 회원", list(choices), index=None,
-            format_func=choices.get, placeholder="닉네임 또는 Riot 태그로 검색",
-            key=f"riot_member_picker_{key}")
-        if selected_id is not None:
-            refresh_control(core, token, [selected_id], key=f"{key}_{selected_id}",
-                            label="이 회원 갱신", show_details=True)
-        else:
-            st.caption("확인할 회원 한 명을 선택해 주세요. 선택만으로 API를 호출하지 않습니다.")
+    picker = st.expander("Riot 정보 확인", key=f"riot_picker_panel_{key}", on_change="rerun")
+    if picker.open:
+        with picker:
+            selected_id = st.selectbox("조회할 회원", list(choices), index=None,
+                format_func=choices.get, placeholder="닉네임 또는 Riot 태그로 검색",
+                key=f"riot_member_picker_{key}", persist_state="session")
+            if selected_id is not None:
+                refresh_control(core, token, [selected_id], key=f"{key}_{selected_id}",
+                                label="이 회원 갱신", show_details=True)
+            else:
+                st.caption("확인할 회원 한 명을 선택해 주세요. 선택만으로 API를 호출하지 않습니다.")
 
 
 def show_profile(profile, *, show_updated=True):
