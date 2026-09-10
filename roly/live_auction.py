@@ -267,9 +267,13 @@ class LiveAuction:
                 snapshot = self._bid_snapshot(db, token, event_id, lot_id, request_id,
                                               receipt_only=receipt_only)
                 yield db, snapshot
-                db.commit()
+                # Normal PG bids finalize their writes and COMMIT together.
+                # Replay/resolve paths still own an open read transaction.
+                if db.in_transaction:
+                    db.commit()
             except BaseException:
-                db.rollback()
+                if db.in_transaction:
+                    db.rollback()
                 raise
 
     def _bid_snapshot(self, db, token, event_id, lot_id, request_id, *, receipt_only=False):
@@ -391,20 +395,24 @@ class LiveAuction:
                 ("UPDATE live_sessions SET updated_at=? WHERE event_id=?", (_iso(stamp), event_id)),
             ]
             detail = {"team_id": team["id"], "team_name": team["name"], "amount": amount}
+            # Prepare the receipt before submitting COMMIT; a construction error
+            # must not be reported as a rejected bid after it has been saved.
+            receipt = self._receipt({"id": None, "event_id": event_id, "lot_id": lot_id,
+                "team_id": team["id"], "amount": amount, "closes_at": deadline,
+                "created_at": _iso(stamp)}, False)
             if self.core.is_postgres:
                 writes.append(("INSERT INTO live_events(event_id,lot_id,actor_id,type,detail,created_at) VALUES(?,?,?,?,?,?)",
                                (event_id, lot_id, actor["id"], "BID", json.dumps(detail, ensure_ascii=False), _iso(stamp))))
-                # No write depends on the generated bid ID. Retrieve it only
-                # after synchronization; _bid_transaction still owns COMMIT.
-                bid_id = db.execute_batch(writes)[1].lastrowid
+                # No write depends on the generated bid ID. Return it only
+                # after the final batch has confirmed a successful COMMIT.
+                bid_id = db.commit_bid_batch(writes)[1].lastrowid
             else:
                 db.execute(*writes[0])
                 bid_id = db.execute(*writes[1]).lastrowid
                 db.execute(*writes[2])
                 self._log(db, event_id, "BID", detail, stamp, actor, lot_id)
-            return self._receipt({"id": bid_id, "event_id": event_id, "lot_id": lot_id,
-                "team_id": team["id"], "amount": amount, "closes_at": deadline,
-                "created_at": _iso(stamp)}, False)
+            receipt["id"] = bid_id
+            return receipt
 
     def resolve_bid(self, token, event_id, lot_id, amount, request_id):
         """Resolve an uncertain submission without submitting or extending a bid.

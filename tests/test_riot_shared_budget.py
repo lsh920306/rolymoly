@@ -131,6 +131,44 @@ class RiotSharedBudgetTests(unittest.TestCase):
         self.assertEqual(self.count(self.first, "riot_rate_cooldowns"), 0)
         self.assertEqual(self.count(self.second, "riot_rate_cooldowns"), 0)
 
+    def _assert_auth_reset_keeps_overlapping_server_cooldown(self, errors):
+        other = self.first.join_member("OtherBudget#QA", "MID", "SUP")
+        self.first.approve_member(self.token, other, 190)
+        self.a.enqueue(self.token, [self.mid, other])
+        members_before = self.first.list_members()
+        deadline = self.clock.value + 7200
+        # Separate workers can finish previously reserved requests in either
+        # order. Their authentication block and 429 deadline share one key.
+        for code in errors:
+            service = self.a if code == "rate_limited" else self.b
+            service.limiter.backoff(RiotAPIError(code, status=429 if code == "rate_limited" else 403,
+                                                retry_after=7200 if code == "rate_limited" else None))
+        self.assertTrue(self.a.limiter.status()["blocked"])
+        self.clock.value += FORCE_SECONDS
+        self.assertEqual(self.a.enqueue(self.token, [self.mid], force=True), 0)
+        self.assertEqual(self.a.limiter.status(), {
+            "blocked": False, "retry_after": deadline - self.clock.value,
+            "last_error": "rate_limited"})
+        self.assertEqual(self.b.limiter.status(), self.a.limiter.status())
+        self.assertFalse(self.a.process_one())
+        self.assertEqual(self.a.client.calls, [])
+        self.assertEqual(self.first.list_members(), members_before)
+        self.clock.value = deadline - 0.001
+        self.assertFalse(self.a.process_one())
+        self.clock.value = deadline
+        self.assertTrue(self.a.process_one())
+        # The other member was already waiting. A force request for the first
+        # member must not allow that independent job to bypass the shared 429.
+        self.assertEqual(self.a.client.calls, [("account", "OtherBudget#QA")])
+        with self.first.read_snapshot() as db:
+            self.assertEqual(db.execute("SELECT stage FROM riot_jobs WHERE member_id=?", (other,)).fetchone()[0], 1)
+
+    def test_force_refresh_keeps_long_429_when_auth_error_arrives_after_rate_error(self):
+        self._assert_auth_reset_keeps_overlapping_server_cooldown(("rate_limited", "auth"))
+
+    def test_force_refresh_keeps_long_429_when_rate_error_arrives_after_auth_error(self):
+        self._assert_auth_reset_keeps_overlapping_server_cooldown(("auth", "rate_limited"))
+
     def test_new_key_resumes_partial_job_without_old_key_auth_block(self):
         self.a.enqueue(self.token, [self.mid])
         self.a.process_one()

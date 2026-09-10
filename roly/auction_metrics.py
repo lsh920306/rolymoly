@@ -13,7 +13,7 @@ from time import perf_counter
 
 
 STAGES = frozenset({"dispatch", "pool_checkout", "writer_begin", "read_begin",
-                    "read_pipeline", "write_pipeline", "statement", "commit", "rollback"})
+                    "read_pipeline", "write_pipeline", "bid_commit_pipeline", "statement", "commit", "rollback"})
 _BACKGROUND_STAGES = frozenset({"pool_reset", "pool_check"})
 _current = ContextVar("roly_auction_metrics", default=None)
 

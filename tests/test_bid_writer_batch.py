@@ -126,7 +126,7 @@ class WriterBatchDomainTests(unittest.TestCase):
     start = fixtures.LiveAuctionTests.start
     pg_bidder = fast.AuctionFastPathTests.pg_bidder
 
-    def test_normal_bid_uses_three_boundaries_and_receipt_paths_use_two(self):
+    def test_normal_bid_uses_two_boundaries_and_receipt_paths_use_two(self):
         lot = self.start()
         boundaries = []
 
@@ -135,9 +135,9 @@ class WriterBatchDomainTests(unittest.TestCase):
                 boundaries.append("begin-lock-read")
                 return super().begin_writer_batches(statements)
 
-            def execute_batch(self, statements):
-                boundaries.append("write")
-                return super().execute_batch(statements)
+            def commit_bid_batch(self, statements):
+                boundaries.append("write-commit")
+                return super().commit_bid_batch(statements)
 
             def commit(self):
                 boundaries.append("commit")
@@ -148,7 +148,7 @@ class WriterBatchDomainTests(unittest.TestCase):
         live = LiveAuction(facade, self.comp)
         key = str(uuid4())
         receipt = live.place_bid(self.tokens[0], self.event, lot["id"], 10, key)
-        self.assertEqual(boundaries, ["begin-lock-read", "write", "commit"])
+        self.assertEqual(boundaries, ["begin-lock-read", "write-commit"])
         for method in (live.place_bid, live.resolve_bid):
             boundaries.clear()
             repeated = method(self.tokens[0], self.event, lot["id"], 10, key)
@@ -210,15 +210,15 @@ class WriterBatchDomainTests(unittest.TestCase):
             nonlocal lost
             connection = original_connect()
             if not lost:
-                original_commit = connection.commit
+                original_commit = connection.commit_bid_batch
 
-                def commit():
+                def commit(statements):
                     nonlocal lost
-                    original_commit()
+                    original_commit(statements)
                     lost = True
                     raise sqlite3.OperationalError("Synthetic lost commit response")
 
-                connection.commit = commit
+                connection.commit_bid_batch = commit
             return connection
 
         live.core.connect = connect

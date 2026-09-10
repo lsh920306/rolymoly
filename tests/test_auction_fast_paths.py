@@ -30,6 +30,11 @@ class BatchedConnection:
     def execute_batch(self, statements):
         return [self.execute(query, params) for query, params in statements]
 
+    def commit_bid_batch(self, statements):
+        results = self.execute_batch(statements)
+        self.db.commit()
+        return results
+
     def begin_writer_batches(self, statements):
         self.execute("BEGIN IMMEDIATE")
         return self.fetch_batches(statements)

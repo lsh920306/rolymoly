@@ -130,7 +130,9 @@ class DatabaseRateLimiter:
         """An explicit refresh can retry authentication without clearing 429s."""
         with _metadata_transaction(self.core, "rate:" + self.key_hash) as db:
             stamp = _time(self.core, db, self.clock)
-            db.execute("UPDATE riot_rate_cooldowns SET blocked=0,until_at=?,last_error='' WHERE key_hash=? AND blocked=1", (stamp, self.key_hash))
+            # Other in-flight requests may have reported a 429 before or after
+            # the authentication failure. Keep that shared server deadline.
+            db.execute("UPDATE riot_rate_cooldowns SET blocked=0,last_error=CASE WHEN until_at>? THEN 'rate_limited' ELSE '' END WHERE key_hash=? AND blocked=1", (stamp, self.key_hash))
 
     def reserve(self, scope):
         if scope not in ("asia", "kr"):

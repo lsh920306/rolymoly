@@ -245,6 +245,21 @@ def _batch_select(query, parameters):
     return _bind_query(statement, parameters is not None), parameters
 
 
+def _batch_dml(statements):
+    """Prepare every DML statement before any part of a batch is sent."""
+    prepared = []
+    for query, parameters in statements:
+        if not isinstance(query, str):
+            raise TypeError("SQL은 문자열로 전달해 주세요.")
+        parts = list(_script_statements(query))
+        code = " ".join(text for kind, text in _regions(query) if kind == "code").lstrip()
+        if len(parts) != 1 or not re.match(r"(?:INSERT|UPDATE|DELETE)\b", code, re.IGNORECASE):
+            raise sqlite3.ProgrammingError("변경 묶음에는 INSERT/UPDATE/DELETE 한 문장씩만 사용할 수 있습니다.")
+        query, generated = _with_generated_id(parts[0])
+        prepared.append((_bind_query(query, parameters is not None), parameters, generated))
+    return prepared
+
+
 class Cursor:
     def __init__(self, cursor, *, generated_id=False):
         self._cursor = cursor
@@ -392,16 +407,7 @@ class PostgresConnection:
         self._require_open()
         if not self.in_transaction:
             raise sqlite3.ProgrammingError("변경 묶음에는 진행 중인 트랜잭션이 필요합니다.")
-        prepared = []
-        for query, parameters in statements:
-            if not isinstance(query, str):
-                raise TypeError("SQL은 문자열로 전달해 주세요.")
-            parts = list(_script_statements(query))
-            code = " ".join(text for kind, text in _regions(query) if kind == "code").lstrip()
-            if len(parts) != 1 or not re.match(r"(?:INSERT|UPDATE|DELETE)\b", code, re.IGNORECASE):
-                raise sqlite3.ProgrammingError("변경 묶음에는 INSERT/UPDATE/DELETE 한 문장씩만 사용할 수 있습니다.")
-            query, generated = _with_generated_id(parts[0])
-            prepared.append((_bind_query(query, parameters is not None), parameters, generated))
+        prepared = _batch_dml(statements)
         if not prepared:
             return []
         try:
@@ -411,6 +417,51 @@ class PostgresConnection:
             return [Cursor(cursor, generated_id=generated) for cursor, generated in cursors]
         except _driver().Error as error:
             raise _database_error(error) from None
+
+    def commit_bid_batch(self, statements):
+        """Finalize a validated bid's writes and COMMIT in one synchronization.
+
+        Unlike execute_batch(), this ends the caller's transaction. All domain
+        validation and receipt preparation must already be complete. Sending
+        COMMIT is not success: check its result and only then read generated IDs.
+        Any error after attempting COMMIT has an uncertain outcome, including
+        result decoding errors; the HTTP layer must resolve the same UUID.
+        """
+        self._require_open()
+        if not self.in_transaction:
+            raise sqlite3.ProgrammingError("입찰 확정에는 진행 중인 트랜잭션이 필요합니다.")
+        prepared = _batch_dml(statements)
+        if not prepared:
+            raise sqlite3.ProgrammingError("확정할 입찰 변경이 필요합니다.")
+        commit_attempted = False
+        try:
+            with measure_stage("bid_commit_pipeline"), self._pipeline():
+                cursors = [(self._raw.execute(query, parameters), generated)
+                           for query, parameters, generated in prepared]
+                # Connection.commit() synchronizes early even in a pipeline.
+                # Set the flag before execute: its response can itself be lost.
+                commit_attempted = True
+                committed = self._raw.execute("COMMIT")
+            # COMMIT on an aborted transaction can return a ROLLBACK tag.
+            if (committed.statusmessage != "COMMIT" or self._raw.closed
+                    or self._raw.info.transaction_status != _driver().pq.TransactionStatus.IDLE):
+                raise sqlite3.OperationalError("입찰 저장 결과를 확인해야 합니다.")
+            results = [Cursor(cursor, generated_id=generated) for cursor, generated in cursors]
+            if any(generated and result.lastrowid is None
+                   for result, (_, generated) in zip(results, cursors)):
+                raise sqlite3.OperationalError("입찰 저장 결과를 확인해야 합니다.")
+            return results
+        except Exception as error:
+            if commit_attempted:
+                # Never reuse a connection with an uncertain protocol/transaction
+                # state, and never translate a post-COMMIT error into rejection.
+                try:
+                    self._raw.close()
+                finally:
+                    raise sqlite3.OperationalError("입찰 저장 결과를 같은 요청 번호로 다시 확인합니다.") from None
+            if isinstance(error, _driver().Error):
+                raise _database_error(error) from None
+            raise
 
     def fetch_batches(self, statements):
         """Fetch plain SELECTs together inside the caller's existing transaction.
