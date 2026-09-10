@@ -109,13 +109,11 @@ export function auctionSocketUrl(path,options) {
 export function createPushDelivery({config,context,fetcher,readToken,makeRequest,onFrame,onAck,onError,onClock,
   now=()=>performance.now(),socketFactory=url=>new WebSocket(url),onMode=()=>{}}) {
   let socket=null,dead=false,terminal=false,ready=false,connectingAt=0,lastContact=0;
-  let retryAt=0,failures=0,generation=0,lastPing=0,pings=new Set(),revision=-1,detailRevision=-1,views=null;
+  let retryAt=0,failures=0,generation=0,lastPing=0,pings=new Set(),revision=-1,detailRevision=-1;
   const reads=new Map();
   const validRevision=value=>Number.isSafeInteger(value) && value>=0;
-  const mergeViews=panel=>{
-    if(Object.hasOwn(panel,'views'))views=panel.views===null?null:{...(views || {}),...panel.views};
-    return {...panel,...(views!==null?{views}:{})};
-  };
+  // publishAuctionViews owns the recovery cache. Forward exact view deltas so
+  // history/sound updates do not dispatch unchanged companion cards again.
   const closeSocket=()=>{
     const old=socket;socket=null;ready=false;pings.clear();
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch(_){}}
@@ -136,7 +134,7 @@ export function createPushDelivery({config,context,fetcher,readToken,makeRequest
       if(validRevision(next))revision=next;
       const detail=panel.transport?.detail_revision;
       if(validRevision(detail))detailRevision=detail;
-      onFrame(mergeViews(panel),{push:false});
+      onFrame(panel,{push:false});
     }});
   function connect() {
     if(dead || terminal || socket || now()<retryAt)return;
@@ -183,7 +181,7 @@ export function createPushDelivery({config,context,fetcher,readToken,makeRequest
       if(frame.detail_revision<detailRevision)delete panel.views;
       else detailRevision=frame.detail_revision;
       lastContact=now();
-      onFrame(mergeViews(panel),{push:true,snapshot,revision,detailRevision});
+      onFrame(panel,{push:true,snapshot,revision,detailRevision});
     };
     opened.onclose=()=>{if(socket===opened)fail('실시간 연결을 다시 확인하고 있습니다.');};
     opened.onerror=()=>{if(socket===opened)fail('실시간 연결을 다시 확인하고 있습니다.');};

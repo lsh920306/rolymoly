@@ -1,5 +1,6 @@
 """Shared profile destination for explicit row actions and lounge cards."""
 import html
+from hashlib import sha256
 
 import pandas as pd
 import streamlit as st
@@ -17,6 +18,10 @@ def open_member_profile(member_id, *, origin="members"):
     st.session_state.profile_origin = origin if origin in ("members", "home") else "members"
     st.session_state.profile_database = st.session_state.db_path
     st.switch_page("app_pages/profile.py", query_params={"member": str(member_id)})
+
+
+def _select_tournament_page(key, before_id):
+    st.session_state[key] = before_id
 
 
 def profile_header(member, profile):
@@ -84,14 +89,24 @@ def render_profile(core, token, actor, member_id):
     if not records.open:
         return
     with records:
-        data = member_records(core, member_id, game_limit=50)
-        st.caption(f"명단 등록 {len(data['tournaments'])}개 · 확정 경기 {data['game_count']}판")
+        cursor_key = f"profile_tournaments_{sha256(str(core.db_path).encode()).hexdigest()[:12]}_{member_id}"
+        before_id = st.session_state.get(cursor_key)
+        data = member_records(core, member_id, game_limit=50, tournament_limit=50,
+                              tournament_before_id=before_id)
+        st.caption(f"명단 등록 {data['tournament_count']}개 · 확정 경기 {data['game_count']}판")
         if data["games"]:
             st.dataframe([{"일시": korean_time(game["played_at"]), "구분": "일반내전" if game["kind"] == "NORMAL" else "경매",
                            "내전": game["title"] or "개별 경기", "결과": "승" if game["team"] == game["winner"] else "패",
                            "점수 증감": game["delta"]} for game in data["games"][:50]], hide_index=True)
         else:
             st.caption("아직 확정된 경기 기록이 없습니다.")
+        if data["tournament_count"]:
+            with st.container(horizontal=True):
+                st.button("최근 명단", key=f"{cursor_key}_latest", disabled=before_id is None,
+                          on_click=_select_tournament_page, args=(cursor_key, None))
+                st.button("이전 명단", key=f"{cursor_key}_older", disabled=data["next_tournament_before_id"] is None,
+                          on_click=_select_tournament_page, args=(cursor_key, data["next_tournament_before_id"]))
+            st.caption("팀·낙찰 이력은 최근 순으로 50개씩 표시합니다.")
         if data["tournaments"]:
             st.markdown("**팀·낙찰 이력**")
             st.dataframe([

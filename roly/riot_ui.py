@@ -88,14 +88,14 @@ def refresh_control(core, token, member_ids, *, key, label="Riot 정보 갱신",
         sync = riot_service(core)
     except ConfigError as error:
         st.warning(str(error))
-        _cached_details(core, ids, show_details)
+        _cached_details(core, ids, show_details, token=token, key=key)
         return
     except sqlite3.Error:
         st.caption("Riot 갱신 서버에 연결하지 못했습니다. 저장된 프로필은 계속 볼 수 있습니다.")
-        _cached_details(core, ids, show_details)
+        _cached_details(core, ids, show_details, token=token, key=key)
         return
     if sync is None:
-        _cached_details(core, ids, show_details)
+        _cached_details(core, ids, show_details, token=token, key=key)
         return
     try:
         context = sha256(repr((str(core.db_path), token, ids)).encode()).hexdigest()
@@ -167,13 +167,29 @@ def refresh_control(core, token, member_ids, *, key, label="Riot 정보 갱신",
         st.caption("Riot 갱신 상태를 불러오지 못했습니다. 저장된 회원 정보는 계속 사용할 수 있습니다.")
 
 
-def _cached_details(core, ids, enabled):
+def _cached_details(core, ids, enabled, *, token=None, key=""):
     if enabled and len(ids) == 1:
         from .riot_profile import member_profiles
-        try:
-            show_profile(member_profiles(core, ids).get(ids[0]))
-        except (ValueError, sqlite3.Error):
+        # Only public profile projection is retained, never a refresh permission.
+        context = sha256(repr((str(core.db_path), token, tuple(ids))).encode()).hexdigest()
+        cache = st.session_state.setdefault("_riot_fallback_cache", {})
+        cached = cache.get(key)
+        checked_at = monotonic()
+        if (not isinstance(cached, dict) or cached.get("context") != context
+                or checked_at - cached["checked_at"] >= IDLE_CHECK_SECONDS):
+            try:
+                cached = {"profile": member_profiles(core, ids).get(ids[0]), "error": False}
+            except (ValueError, sqlite3.Error):
+                cached = {"profile": None, "error": True}
+            cached.update(context=context, checked_at=checked_at)
+            cache.pop(key, None)
+            cache[key] = cached
+            while len(cache) > POLL_CACHE_LIMIT:
+                cache.pop(next(iter(cache)))
+        if cached["error"]:
             st.caption("저장된 Riot 정보를 잠시 불러올 수 없습니다.")
+        else:
+            show_profile(cached["profile"])
 
 
 def member_refresh_picker(core, token, members, *, key):

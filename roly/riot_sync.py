@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS riot_rate_cooldowns(
 TTL_SECONDS = 6 * 60 * 60
 FORCE_SECONDS = 5 * 60
 LEASE_SECONDS = 60
+WORKER_MAX_WAIT = 5.0
 _ERRORS = {
     "disabled": "Riot API 설정이 필요합니다.", "auth": "Riot API 키를 확인해 주세요.",
     "not_found": "Riot 계정을 찾지 못했습니다.", "rate_limited": "Riot 요청 제한을 기다리고 있습니다.",
@@ -119,12 +120,16 @@ class DatabaseRateLimiter:
 
     def status(self):
         """A scheduling hint; reserve() rechecks under the shared rate lock."""
-        with self.core.read_snapshot() as db:
-            stamp = _time(self.core, db, self.clock)
-            row = db.execute("SELECT until_at,blocked,last_error FROM riot_rate_cooldowns WHERE key_hash=?", (self.key_hash,)).fetchone()
-            return {"blocked": bool(row and row["blocked"]),
-                    "retry_after": max(0.0, row["until_at"] - stamp) if row else 0.0,
-                    "last_error": row["last_error"] if row and row["last_error"] in _ERRORS else ""}
+        statements = [("SELECT until_at,blocked,last_error FROM riot_rate_cooldowns WHERE key_hash=?", (self.key_hash,))]
+        database_clock = self.core.is_postgres and self.clock is None
+        if database_clock:
+            statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", ()))
+        batches = self.core.read_batches(statements)
+        stamp = float(batches[1][0][0]) if database_clock else float(self.clock() if self.clock else time.time())
+        row = batches[0][0] if batches[0] else None
+        return {"blocked": bool(row and row["blocked"]),
+                "retry_after": max(0.0, row["until_at"] - stamp) if row else 0.0,
+                "last_error": row["last_error"] if row and row["last_error"] in _ERRORS else ""}
 
     def reset_auth(self):
         """An explicit refresh can retry authentication without clearing 429s."""
@@ -200,6 +205,8 @@ class RiotSync:
         self.limiter = DatabaseRateLimiter(self.rate_core, self.key_hash, clock)
         factory = client_factory or RiotClient
         self.client = factory(self.config, before_request=self.limiter.reserve)
+        # Independent callers must not share claim scheduling hints.
+        self._schedule = threading.local()
 
     @staticmethod
     def _ids(member_ids):
@@ -259,6 +266,7 @@ class RiotSync:
             # A shared remote budget must not be contacted while a demo's
             # local writer is held. Unauthorized/failed enqueues never reset it.
             self.limiter.reset_auth()
+        _wake_existing_worker(self.core.db_path)
         return queued
 
     def get_profiles(self, member_ids):
@@ -281,9 +289,13 @@ class RiotSync:
         return results
 
     def _claim(self):
+        self._schedule.pending = None
+        self._schedule.delay = WORKER_MAX_WAIT
+        self._schedule.cooldown = None
         if not self.config.enabled:
             return None
         cooldown = self.limiter.status()
+        self._schedule.cooldown = cooldown
         if cooldown["blocked"] or cooldown["retry_after"] > 0:
             return None
         with _metadata_transaction(self.core, "jobs") as db:
@@ -293,6 +305,7 @@ class RiotSync:
             db.execute("UPDATE riot_jobs SET status='FAILED',lease_id=NULL,lease_until=0,last_error='profile_changed' WHERE status IN ('QUEUED','RUNNING') AND NOT EXISTS(SELECT 1 FROM members m WHERE m.id=riot_jobs.member_id AND m.canonical_id=riot_jobs.canonical_id AND m.status='APPROVED')")
             row = db.execute("SELECT * FROM riot_jobs WHERE (status='QUEUED' OR (status='RUNNING' AND lease_until<=?)) AND next_attempt<=? ORDER BY next_attempt,requested_at,member_id LIMIT 1", (stamp, stamp)).fetchone()
             if not row:
+                self._remember_pending(db.execute(self._pending_sql()).fetchone()[0], stamp, cooldown)
                 return None
             job = dict(row)
             job["lease_id"] = str(uuid4())
@@ -384,11 +397,32 @@ class RiotSync:
             self._failure(job, RiotAPIError("invalid_response"))
         return True
 
+    @staticmethod
+    def _pending_sql():
+        return """SELECT MIN(CASE WHEN status='RUNNING' AND lease_until>next_attempt
+            THEN lease_until ELSE next_attempt END) FROM riot_jobs WHERE status IN ('QUEUED','RUNNING')"""
+
+    def _remember_pending(self, due, stamp, cooldown):
+        self._schedule.pending = due is not None
+        delay = max(0.5, float(due) - stamp, cooldown["retry_after"]) if due is not None else WORKER_MAX_WAIT
+        self._schedule.delay = min(WORKER_MAX_WAIT, delay)
+
     def _pending_work(self):
-        if self.limiter.status()["blocked"]:
+        cooldown = getattr(self._schedule, "cooldown", None)
+        if cooldown is None:
+            cooldown = self.limiter.status()
+        if cooldown["blocked"]:
+            self._schedule.delay = WORKER_MAX_WAIT
             return False
-        with self.core.read_snapshot() as db:
-            return bool(db.execute("SELECT 1 FROM riot_jobs WHERE status IN ('QUEUED','RUNNING') LIMIT 1").fetchone())
+        if getattr(self._schedule, "pending", None) is None:
+            statements = [(self._pending_sql(), ())]
+            database_clock = self.core.is_postgres and self.clock is None
+            if database_clock:
+                statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", ()))
+            batches = self.core.read_batches(statements)
+            stamp = float(batches[1][0][0]) if database_clock else float(self.clock() if self.clock else time.time())
+            self._remember_pending(batches[0][0][0], stamp, cooldown)
+        return self._schedule.pending
 
     def ensure_worker(self):
         return start_worker(self.core, self.config, sync=self)
@@ -396,6 +430,26 @@ class RiotSync:
 
 _workers = {}
 _worker_lock = threading.Lock()
+
+
+class _WorkerStop(threading.Event):
+    """Existing resource owners may call stop.set() directly."""
+    def __init__(self, wake):
+        super().__init__()
+        self.wake = wake
+
+    def set(self):
+        super().set()
+        self.wake.set()
+
+
+def _wake_existing_worker(path):
+    with _worker_lock:
+        state = _workers.get(path)
+        if state and not state["stop"].is_set():
+            state["generation"] += 1
+            if state.get("wake") is not None:
+                state["wake"].set()
 
 
 def stop_demo_workers():
@@ -436,19 +490,26 @@ def start_worker(core, config=None, *, sync=None):
                 and previous.get("rate_path", core.db_path) == rate_path
                 and previous["thread"].is_alive() and not previous["stop"].is_set()):
             previous["generation"] += 1
+            if previous.get("wake") is not None:
+                previous["wake"].set()
             return previous["thread"]
         if previous:
             previous["stop"].set()
-        stop = threading.Event()
-        state = {"key_hash": service.key_hash, "rate_path": rate_path, "stop": stop, "generation": 0}
+        wake = threading.Event()
+        stop = _WorkerStop(wake)
+        state = {"key_hash": service.key_hash, "rate_path": rate_path, "stop": stop, "wake": wake, "generation": 0}
 
         def work():
             idle_since = time.monotonic()
             try:
                 while not stop.is_set():
+                    idle_wait = False
                     try:
                         with _worker_lock:
+                            wake.clear()
                             generation = state["generation"]
+                        if stop.is_set():
+                            break
                         worked = service.process_one()
                         if worked or service._pending_work():
                             idle_since = time.monotonic()
@@ -459,11 +520,19 @@ def start_worker(core, config=None, *, sync=None):
                                         _workers.pop(core.db_path, None)
                                     return
                             idle_since = time.monotonic()
+                        else:
+                            idle_wait = True
                     except Exception:
                         # Worker errors never include credentials, HTTP URLs,
                         # private Riot responses or driver details in logs.
                         worked = False
-                    stop.wait(0.05 if worked else 0.5)
+                        service._schedule.delay = 0.5
+                    if stop.is_set():
+                        break
+                    delay = 0.05 if worked else getattr(service._schedule, "delay", 0.5)
+                    if idle_wait:
+                        delay = min(delay, max(0.0, 30 - (time.monotonic() - idle_since)))
+                    wake.wait(min(WORKER_MAX_WAIT, delay))
             finally:
                 with _worker_lock:
                     if _workers.get(core.db_path) is state:

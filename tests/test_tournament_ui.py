@@ -194,7 +194,10 @@ class TournamentUITests(unittest.TestCase):
         self.click("참가자 선택 시작")
         self.service.set_participants(self.token, event_id, self.assignments[:10])
         self.app.run()
-        self.click("참가자 등록·수정")
+        with patch.object(Core, "list_members", autospec=True, side_effect=Core.list_members) as loaded:
+            self.click("참가자 등록·수정")
+        self.assertEqual(loaded.call_count, 1)
+        self.assertEqual(loaded.call_args.kwargs, {"include_pending": True})
         self.app.multiselect(key=f"t_roster_{event_id}_members").set_value(self.ids[:15]).run()
         original = self.service.get_event(event_id)
         self.service.set_participants(self.token, event_id, self.assignments[:19], original["roster_token"])

@@ -3,7 +3,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from roly.ui import context, lounge_service, ROOT, FORMATS, KINDS, STATUS
+from roly.ui import context, lounge_service, lounge_profile, in_page_run, ROOT, FORMATS, KINDS, STATUS
 from roly.lounge_ui import KST, WEEKDAYS, local_time, time_label, profile_dialog, creation_action
 from roly.member_profile_page import open_member_profile
 from roly.member_cards import render_member_cards
@@ -11,7 +11,7 @@ from roly.member_cards import render_member_cards
 
 core, competition, token, actor = context()
 lounge = lounge_service(core.db_path)
-profile = lounge.profile()
+profile = lounge_profile(core.db_path)
 today = datetime.now(KST)
 is_admin = bool(actor and actor["role"] == "admin")
 members = core.list_members(include_pending=is_admin)
@@ -45,6 +45,24 @@ def empty_schedule(message, key):
         st.caption(message, text_alignment="center")
 
 
+@st.fragment
+def member_search(initial_members):
+    current_core, _, _, _ = context()
+    # Reuse the current full-run read; independent search reruns read afresh.
+    current = initial_members if in_page_run() else current_core.list_members()
+    with st.container(border=True, gap="xsmall", key="lounge_members"):
+        st.subheader(f"클랜원 · {len(current)}명")
+        query = st.text_input("닉네임으로 검색", key="home_member_search", placeholder="닉네임 또는 Riot ID", label_visibility="collapsed")
+        found = [member for member in current if query.strip().casefold() in member["riot_id"].casefold()]
+        found.sort(key=lambda member: member["riot_id"].casefold())
+        selected_member_id = render_member_cards(found, key="home_member_cards")
+        if selected_member_id is not None:
+            try:
+                open_member_profile(selected_member_id, origin="home")
+            except ValueError as error:
+                st.warning(str(error))
+
+
 with st.container(horizontal=True, horizontal_alignment="center"):
     with st.container(width=1150, gap="small"):
         with st.container(horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"):
@@ -62,8 +80,9 @@ with st.container(horizontal=True, horizontal_alignment="center"):
                 if image_path.is_file():
                     # A bundled poster has a stable public asset URL; it does not
                     # need a session-owned, resized /media file.
-                    st.html('<img src="app/static/rolymoly-poster.png" alt="롤리몰리 클랜 소개 포스터" '
-                        'style="display:block;width:min(280px,100%);height:auto;aspect-ratio:1;object-fit:contain;border-radius:12px;">')
+                    st.html('<picture><source srcset="app/static/rolymoly-poster.webp" type="image/webp">'
+                        '<img src="app/static/rolymoly-poster.png" alt="롤리몰리 클랜 소개 포스터" '
+                        'style="display:block;width:min(280px,100%);height:auto;aspect-ratio:1;object-fit:contain;border-radius:12px;"></picture>')
             with details:
                 with st.container(horizontal=True, gap="medium"):
                     with st.container(width="content", gap="xxsmall"):
@@ -143,17 +162,7 @@ with st.container(horizontal=True, horizontal_alignment="center"):
             with st.container(border=True, gap="xsmall", key="lounge_record_link"):
                 st.subheader("내전 전력 & 기록")
                 st.page_link("app_pages/members.py", label="전체 회원 기록", icon=":material/arrow_forward:", icon_position="right")
-            with st.container(border=True, gap="xsmall", key="lounge_members"):
-                st.subheader(f"클랜원 · {len(approved)}명")
-                query = st.text_input("닉네임으로 검색", key="home_member_search", placeholder="닉네임 또는 Riot ID", label_visibility="collapsed")
-                found = [member for member in approved if query.strip().casefold() in member["riot_id"].casefold()]
-                found.sort(key=lambda member: member["riot_id"].casefold())
-                selected_member_id = render_member_cards(found, key="home_member_cards")
-                if selected_member_id is not None:
-                    try:
-                        open_member_profile(selected_member_id, origin="home")
-                    except ValueError as error:
-                        st.warning(str(error))
+            member_search(approved)
 
             if is_admin:
                 with st.container(border=True, gap="xsmall", key="lounge_pending"):

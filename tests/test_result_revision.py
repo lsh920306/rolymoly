@@ -76,7 +76,18 @@ class ResultRevisionTests(unittest.TestCase):
         final = self.comp.get_event(event_id)["games"][-1]
         old_core_id = self.comp.record_result(self.token, event_id, final["id"], final["team_a"], request_key="same-client-key")
         before = self.snapshot(event_id)
-        preview = self.preview(event_id)
+        trace = []
+        connect = self.core.connect
+        def traced_connect():
+            conn = connect()
+            conn.set_trace_callback(trace.append)
+            return conn
+        with patch.object(self.core, "connect", side_effect=traced_connect):
+            preview = self.preview(event_id)
+        # One whole-event ledger read is also reused by the fingerprint.
+        ledger_reads = [sql for sql in trace if sql.startswith("SELECT * FROM games WHERE")]
+        self.assertEqual(len(ledger_reads), 1)
+        self.assertIn("tournament_id=", ledger_reads[0])
         self.assertEqual(preview["void_count"], 1)
         self.assertEqual(before, self.snapshot(event_id))
         with patch.object(self.core, "correct_game", side_effect=ValueError("원장 오류 시뮬레이션")):
@@ -101,6 +112,10 @@ class ResultRevisionTests(unittest.TestCase):
         labels = self.comp.game_labels()
         self.assertEqual(labels[old_core_id]["team_a_name"], final["team_a_name"])
         self.assertEqual(labels[replay_id]["team_a_name"], replacement["team_a_name"])
+        self.assertEqual(self.comp.game_labels([old_core_id, replay_id, old_core_id]),
+                         {key: labels[key] for key in (old_core_id, replay_id)})
+        with patch.object(self.core, "connect", side_effect=AssertionError("empty selection read")):
+            self.assertEqual(self.comp.game_labels([]), {})
         self.comp.finalize_event(self.token, event_id)
         self.assertEqual(sum(m["award_units"] for m in self.core.list_members()), 5)
 

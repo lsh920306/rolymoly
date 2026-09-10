@@ -643,14 +643,22 @@ class Competition:
 
     def _round_robin(self, conn, event_id, teams, group="", stage="MAIN", round_offset=0):
         rotation = list(teams)
+        statements = []
         if len(rotation) % 2:
             rotation.append(None)
         for r in range(len(rotation) - 1):
             for p in range(len(rotation) // 2):
                 a, b = rotation[p], rotation[-p - 1]
                 if a is not None and b is not None:
-                    self._game(conn, event_id, r + 1 + round_offset, p + 1, a, b, group, stage)
+                    if self.service.is_postgres:
+                        # Flat league fixtures never consume one another's IDs.
+                        statements.append(("INSERT INTO competition_games(event_id,round,position,group_key,stage,team_a,team_b,source_a,source_b) VALUES(?,?,?,?,?,?,?,?,?)",
+                                           (event_id, r + 1 + round_offset, p + 1, group, stage, a, b, None, None)))
+                    else:
+                        self._game(conn, event_id, r + 1 + round_offset, p + 1, a, b, group, stage)
             rotation = [rotation[0], rotation[-1]] + rotation[1:-1]
+        if statements:
+            self._write_statements(conn, statements)
 
     def _make_schedule(self, conn, event_id, teams, format_name):
         if conn.execute("SELECT 1 FROM competition_games WHERE event_id=?", (event_id,)).fetchone():
@@ -714,6 +722,7 @@ class Competition:
     def _propagate(self, conn, event_id):
         games = conn.execute("SELECT * FROM competition_games WHERE event_id=? ORDER BY round,position", (event_id,)).fetchall()
         by_id = {g["id"]: g for g in games}
+        statements = []
         def source_team(source_id, result):
             source = by_id.get(source_id)
             if source is None or source["winner_team_id"] is None:
@@ -726,7 +735,10 @@ class Competition:
                 continue
             a = source_team(game["source_a"], game["source_a_result"]) if game["source_a"] else game["team_a"]
             b = source_team(game["source_b"], game["source_b_result"]) if game["source_b"] else game["team_b"]
-            conn.execute("UPDATE competition_games SET team_a=?,team_b=? WHERE id=?", (a, b, game["id"]))
+            if (a, b) != (game["team_a"], game["team_b"]):
+                statements.append(("UPDATE competition_games SET team_a=?,team_b=? WHERE id=?", (a, b, game["id"])))
+        if statements:
+            self._write_statements(conn, statements)
 
     @staticmethod
     def _standings(conn, event_id, group=""):
@@ -955,24 +967,38 @@ class Competition:
         with closing(self.service.connect()) as conn:
             return [dict(r) for r in conn.execute("SELECT e.*,a.display_name AS created_by_name,(SELECT COUNT(*) FROM competition_players p WHERE p.event_id=e.id AND p.participation_status='SELECTED') AS participant_count FROM competition_events e LEFT JOIN accounts a ON a.id=e.created_by ORDER BY e.id DESC")]
 
-    def game_labels(self):
+    def game_labels(self, game_ids=None):
         """Return real competition team names for the shared Core game history."""
+        from .core import integer
+        ids = None if game_ids is None else list(dict.fromkeys(integer(value, "경기 번호") for value in game_ids))
+        if ids == []:
+            return {}
+        # Bound SQL parameters even when a caller requests a whole export.
+        groups = [None] if ids is None else [ids[start:start + 200] for start in range(0, len(ids), 200)]
+        archives, rows = [], []
         with closing(self.service.connect()) as conn:
-            labels = {}
-            if _table_exists(conn, "competition_game_archives"):
-                for row in conn.execute("SELECT a.*,e.title FROM competition_game_archives a JOIN competition_events e ON e.id=a.event_id WHERE a.core_game_id IS NOT NULL ORDER BY a.id"):
-                    snapshot = json.loads(row["snapshot"])
-                    labels[row["core_game_id"]] = {"core_game_id": row["core_game_id"], "event_id": row["event_id"], "title": row["title"],
-                        "team_a_name": snapshot["team_a_name"], "team_b_name": snapshot["team_b_name"], "winner_name": snapshot["winner_name"]}
-            rows = conn.execute("""SELECT g.core_game_id,g.event_id,e.title,
-                a.name AS team_a_name,b.name AS team_b_name,w.name AS winner_name
-                FROM competition_games g JOIN competition_events e ON e.id=g.event_id
-                LEFT JOIN competition_teams a ON a.id=g.team_a
-                LEFT JOIN competition_teams b ON b.id=g.team_b
-                LEFT JOIN competition_teams w ON w.id=g.winner_team_id
-                WHERE g.core_game_id IS NOT NULL""")
-            labels.update({row["core_game_id"]: dict(row) for row in rows})
-            return labels
+            has_archives = self.service.is_postgres or _table_exists(conn, "competition_game_archives")
+            for group in groups:
+                params = () if group is None else tuple(group)
+                condition = "" if group is None else " IN (" + ",".join("?" for _ in group) + ")"
+                if has_archives:
+                    archives.extend(dict(row) for row in conn.execute(
+                        "SELECT a.core_game_id,a.event_id,a.snapshot,e.title FROM competition_game_archives a JOIN competition_events e ON e.id=a.event_id WHERE a.core_game_id IS NOT NULL"
+                        + (" AND a.core_game_id" + condition if condition else "") + " ORDER BY a.id", params))
+                rows.extend(dict(row) for row in conn.execute("""SELECT g.core_game_id,g.event_id,e.title,
+                    a.name AS team_a_name,b.name AS team_b_name,w.name AS winner_name
+                    FROM competition_games g JOIN competition_events e ON e.id=g.event_id
+                    LEFT JOIN competition_teams a ON a.id=g.team_a
+                    LEFT JOIN competition_teams b ON b.id=g.team_b
+                    LEFT JOIN competition_teams w ON w.id=g.winner_team_id
+                    WHERE g.core_game_id IS NOT NULL""" + (" AND g.core_game_id" + condition if condition else ""), params))
+        labels = {}
+        for row in archives:
+            snapshot = json.loads(row["snapshot"])
+            labels[row["core_game_id"]] = {"core_game_id": row["core_game_id"], "event_id": row["event_id"], "title": row["title"],
+                "team_a_name": snapshot["team_a_name"], "team_b_name": snapshot["team_b_name"], "winner_name": snapshot["winner_name"]}
+        labels.update({row["core_game_id"]: row for row in rows})
+        return labels
 
     def get_event(self, event_id):
         statements = [
@@ -982,16 +1008,19 @@ class Competition:
             ("SELECT * FROM competition_games WHERE event_id=? ORDER BY round,group_key,position,id", (event_id,)),
             ("SELECT * FROM competition_audit WHERE event_id=? ORDER BY id DESC LIMIT 30", (event_id,)),
         ]
-        with closing(self.service.connect()) as conn:
-            conn.execute("BEGIN")
-            fetch = getattr(conn, "fetch_batches", None)
-            batches = fetch(statements) if callable(fetch) else [list(conn.execute(q, p)) for q, p in statements]
-            if not batches[0]:
-                raise ValueError("대회를 찾을 수 없습니다.")
-            event = dict(batches[0][0])
-            participants, teams, games, audit = ([dict(r) for r in rows] for rows in batches[1:])
-            archives = ([dict(r) for r in conn.execute("SELECT * FROM competition_game_archives WHERE event_id=? ORDER BY id DESC", (event_id,))]
-                        if _table_exists(conn, "competition_game_archives") else [])
+        archive_query = ("SELECT * FROM competition_game_archives WHERE event_id=? ORDER BY id DESC", (event_id,))
+        if self.service.is_postgres:
+            batches = self.service.read_batches([*statements, archive_query])
+        else:
+            with self.service.read_snapshot() as conn:
+                if _table_exists(conn, "competition_game_archives"):
+                    statements.append(archive_query)
+                batches = self.service.read_batches(statements, conn=conn)
+        if not batches[0]:
+            raise ValueError("대회를 찾을 수 없습니다.")
+        event = dict(batches[0][0])
+        participants, teams, games, audit = ([dict(r) for r in rows] for rows in batches[1:5])
+        archives = [dict(r) for r in batches[5]] if len(batches) > 5 else []
         # Format and rank the same snapshot after returning the DB connection.
         event["policy_snapshot"] = json.loads(event["policy_snapshot"])
         players = [p for p in participants if p["participation_status"] == "SELECTED"]

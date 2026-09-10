@@ -244,3 +244,39 @@ member_refresh_picker(core, st.session_state.token, st.session_state.players, ke
             app.button(key=f"riot_refresh_profile_{selected_id}").click().run()
             self.assertFalse(app.exception)
             self.assertEqual(sync.queued, [((selected_id,), True)])
+
+
+class RiotFallbackCacheTests(unittest.TestCase):
+    def test_fallback_reads_are_bounded_and_context_changes_never_reuse_profile(self):
+        from roly.riot_ui import _cached_details, IDLE_CHECK_SECONDS
+        import sqlite3
+        clock = [100.0]
+        state = {}
+        core = SimpleNamespace(db_path="isolated-fallback.sqlite3")
+        profile = {"current_tier": "골드 2", "lp": 37, "champions": []}
+        with patch("roly.riot_ui.st.session_state", state), \
+                patch("roly.riot_ui.monotonic", side_effect=lambda: clock[0]), \
+                patch("roly.riot_ui.show_profile") as shown, patch("roly.riot_ui.st.caption") as caption, \
+                patch("roly.riot_profile.member_profiles", return_value={1: profile}) as reader:
+            _cached_details(core, (1,), False, token="first", key="profile")
+            reader.assert_not_called()
+            _cached_details(core, (1,), True, token="first", key="profile")
+            clock[0] += 3
+            _cached_details(core, (1,), True, token="first", key="profile")
+            self.assertEqual(reader.call_count, 1)
+            shown.assert_called_with(profile)
+            clock[0] = 100 + IDLE_CHECK_SECONDS
+            _cached_details(core, (1,), True, token="first", key="profile")
+            self.assertEqual(reader.call_count, 2)
+            _cached_details(core, (1,), True, token="second", key="profile")
+            self.assertEqual(reader.call_count, 3)
+            _cached_details(core, (2,), True, token="second", key="profile")
+            shown.assert_called_with(None)
+            self.assertEqual(reader.call_count, 4)
+            reader.side_effect = sqlite3.OperationalError("synthetic outage")
+            core.db_path = "different-fallback.sqlite3"
+            _cached_details(core, (2,), True, token="second", key="profile")
+            clock[0] += 3
+            _cached_details(core, (2,), True, token="second", key="profile")
+            self.assertEqual(reader.call_count, 5)
+            caption.assert_called_with("저장된 Riot 정보를 잠시 불러올 수 없습니다.")

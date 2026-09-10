@@ -54,6 +54,26 @@ def clear_revision_preview():
     st.session_state.pop("events_revision_preview", None)
 
 
+def history_rows(games, labels, event_map, kind_label):
+    return [{"경기 번호": game["id"], "경기 시각": korean_time(game["played_at"]),
+             "종류": KINDS[game["kind"]], kind_label: event_map.get(str(game["tournament_id"]), {}).get("title", "개별 경기"),
+             "승리팀": labels.get(game["id"], {}).get("winner_name") or f"{game['winner']}팀",
+             "상태": "확정" if game["status"] == "CONFIRMED" else "무효", "진행자": game["actor_name"]}
+            for game in games]
+
+
+def export_history(core, competition, kind, kind_label):
+    games = core.list_games(kind=kind)
+    labels = competition.game_labels([game["id"] for game in games])
+    events = {str(item["id"]): item for item in competition.list_events()}
+    return history_rows(games, labels, events, kind_label)
+
+
+def select_history_page(cursor_key, before_id, detail_key):
+    st.session_state[cursor_key] = before_id
+    st.session_state.pop(detail_key, None)
+
+
 def save_reviewed_swap(competition, token, event_id, review, body, context_key):
     try:
         result = competition.swap_players(token, event_id, **body,
@@ -487,23 +507,35 @@ with selected_tab:
         with history_tab:
             st.subheader("전체 경기 이력")
             st.caption(f"모든 {kind_label}의 확정·무효 경기 기록입니다.")
-            history_games = core.list_games(kind=kind)
+            cursor_key = f"events_history_before_{sha256(str(core.db_path).encode()).hexdigest()[:12]}_{kind}"
+            detail_key = f"events_history_detail_{kind}"
+            before_id = st.session_state.get(cursor_key)
+            history_page = core.list_games(kind=kind, limit=51, before_id=before_id)
+            history_games = history_page[:50]
+            with st.container(horizontal=True):
+                st.button("최근 경기", key=f"{cursor_key}_latest", disabled=before_id is None,
+                          on_click=select_history_page, args=(cursor_key, None, detail_key))
+                st.button("이전 경기", key=f"{cursor_key}_older", disabled=len(history_page) <= 50,
+                          on_click=select_history_page,
+                          args=(cursor_key, history_games[-1]["id"] if history_games else before_id, detail_key))
+            st.caption("최근 순으로 50건씩 표시합니다. CSV에는 전체 경기 이력을 담습니다.")
             if not history_games:
                 st.info("저장된 경기 결과가 없습니다.")
             else:
                 event_map = {str(item["id"]): item for item in events}
-                history_team_names = competition.game_labels()
-                history_rows = [{"경기 번호": game["id"], "경기 시각": korean_time(game["played_at"]),
-                    "종류": KINDS[game["kind"]], f"{kind_label}": event_map.get(str(game["tournament_id"]), {}).get("title", "개별 경기"),
-                    "승리팀": history_team_names.get(game["id"], {}).get("winner_name") or f"{game['winner']}팀", "상태": "확정" if game["status"] == "CONFIRMED" else "무효",
-                    "진행자": game["actor_name"]} for game in history_games]
-                st.dataframe(history_rows, hide_index=True)
-                st.download_button(f"{kind_label} 경기 이력 CSV 다운로드", deferred_csv(core, history_rows), file_name=f"rolymoly_{kind.lower()}_game_history.csv", mime="text/csv", icon=":material/download:", on_click="ignore")
+                history_team_names = competition.game_labels([game["id"] for game in history_games])
+                st.dataframe(history_rows(history_games, history_team_names, event_map, kind_label), hide_index=True)
+                st.download_button(f"{kind_label} 경기 이력 CSV 다운로드",
+                    deferred_csv(core, lambda core=core, competition=competition, kind=kind, label=kind_label:
+                                 export_history(core, competition, kind, label)),
+                    file_name=f"rolymoly_{kind.lower()}_game_history.csv", mime="text/csv", icon=":material/download:", on_click="ignore")
                 history_map = {game["id"]: game for game in history_games}
+                if st.session_state.get(detail_key) not in history_map:
+                    st.session_state.pop(detail_key, None)
                 history_id = st.selectbox("상세 기록을 볼 경기", list(history_map), index=None,
                     format_func=lambda game_id: f"{korean_time(history_map[game_id]['played_at'])} · {history_map[game_id]['notes'] or '개별 경기'}",
-                    placeholder="경기를 선택하면 선수별 점수와 정정 내역이 표시됩니다.", key=f"events_history_detail_{kind}", persist_state="session")
-                if history_id is not None:
+                    placeholder="경기를 선택하면 선수별 점수와 정정 내역이 표시됩니다.", key=detail_key, persist_state="session")
+                if history_id in history_map:
                     detail = core.get_game(history_id)
                     detail_names = history_team_names.get(history_id, {})
                     team_labels = {"A": detail_names.get("team_a_name") or "A팀", "B": detail_names.get("team_b_name") or "B팀"}

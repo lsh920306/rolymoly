@@ -385,8 +385,9 @@ class TournamentService:
                 raise ValueError(f"{team['name']}: 5명과 TOP/JG/MID/AD/SUP 포지션을 확인해 주세요.")
             if team["captain_id"] not in {p["member_id"] for p in roster}:
                 raise ValueError("팀장은 자신의 팀에 포함되어야 합니다.")
-            for p in roster:
-                self.competition._player_snapshot(conn, p["member_id"], p["role"])
+        # Recheck current eligibility at both build and confirmation without
+        # replacing the score/tier snapshots already frozen on participants.
+        self.competition._player_snapshots(conn, players)
         return teams
 
     def build_bracket(self, token, event_id, format_name=None):

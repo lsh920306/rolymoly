@@ -26,8 +26,7 @@ class Lounge:
             db.execute("INSERT OR IGNORE INTO clan_profile(id,name,updated_at) VALUES(1,'롤리몰리',?)", (now(),))
 
     def profile(self):
-        with closing(self.core.connect()) as db:
-            return dict(db.execute("SELECT * FROM clan_profile WHERE id=1").fetchone())
+        return dict(self.core.read_batches([("SELECT * FROM clan_profile WHERE id=1", ())])[0][0])
 
     def home_summary(self, current_time):
         """Read only the public event/history fields displayed on the lounge.
@@ -44,41 +43,48 @@ class Lounge:
                else start.replace(month=start.month + 1))
         bounds = tuple(stamp.astimezone(timezone.utc).isoformat(timespec="microseconds")
                        for stamp in (start, end))
-        with self.core.read_snapshot() as db:
-            active = [dict(row) for row in db.execute("""SELECT
-                e.id,e.title,e.kind,e.team_count,e.format,e.status,e.starts_at,e.created_at,
+        statements = [
+            ("""SELECT e.id,e.title,e.kind,e.team_count,e.format,e.status,e.starts_at,e.created_at,
                 (SELECT COUNT(*) FROM competition_players p
                  WHERE p.event_id=e.id AND p.participation_status='SELECTED') AS participant_count
                 FROM competition_events e WHERE e.status NOT IN ('COMPLETED','CANCELLED')
-                ORDER BY e.id DESC""")]
-            recent = [dict(row) for row in db.execute("""SELECT id,kind,played_at,winner
-                FROM games WHERE status='CONFIRMED' ORDER BY played_at DESC,id DESC LIMIT 5""")]
-            count = db.execute("""SELECT COUNT(*) FROM games
-                WHERE status='CONFIRMED' AND played_at>=? AND played_at<?""", bounds).fetchone()[0]
-            labels = {}
-            if recent:
-                from .competition import _table_exists
-                ids = tuple(game['id'] for game in recent)
-                marks = ','.join('?' for _ in ids)
-                if _table_exists(db, 'competition_game_archives'):
-                    for row in db.execute(f"""SELECT a.core_game_id,a.event_id,a.snapshot,e.title
+                ORDER BY e.id DESC""", ()),
+            ("""SELECT id,kind,played_at,winner
+                FROM games WHERE status='CONFIRMED' ORDER BY played_at DESC,id DESC LIMIT 5""", ()),
+            ("""SELECT COUNT(*) FROM games
+                WHERE status='CONFIRMED' AND played_at>=? AND played_at<?""", bounds),
+        ]
+        recent_ids = "SELECT id FROM games WHERE status='CONFIRMED' ORDER BY played_at DESC,id DESC LIMIT 5"
+        archive_query = (f"""SELECT a.core_game_id,a.event_id,a.snapshot,e.title
                         FROM competition_game_archives a JOIN competition_events e ON e.id=a.event_id
-                        WHERE a.core_game_id IN ({marks}) ORDER BY a.id""", ids):
-                        saved = json.loads(row['snapshot'])
-                        labels[row['core_game_id']] = {
-                            'core_game_id': row['core_game_id'], 'event_id': row['event_id'],
-                            'title': row['title'], 'team_a_name': saved['team_a_name'],
-                            'team_b_name': saved['team_b_name'], 'winner_name': saved['winner_name']}
-                rows = db.execute(f"""SELECT g.core_game_id,g.event_id,e.title,
+                        WHERE a.core_game_id IN ({recent_ids}) ORDER BY a.id""", ())
+        label_query = (f"""SELECT g.core_game_id,g.event_id,e.title,
                     a.name AS team_a_name,b.name AS team_b_name,w.name AS winner_name
                     FROM competition_games g JOIN competition_events e ON e.id=g.event_id
                     LEFT JOIN competition_teams a ON a.id=g.team_a
                     LEFT JOIN competition_teams b ON b.id=g.team_b
                     LEFT JOIN competition_teams w ON w.id=g.winner_team_id
-                    WHERE g.core_game_id IN ({marks})""", ids)
-                labels.update({row['core_game_id']: dict(row) for row in rows})
-            return {'active_events': active, 'recent_games': recent,
-                    'month_game_count': count, 'game_labels': labels}
+                    WHERE g.core_game_id IN ({recent_ids})""", ())
+        if self.core.is_postgres:
+            batches = self.core.read_batches([*statements, archive_query, label_query])
+        else:
+            from .competition import _table_exists
+            with self.core.read_snapshot() as db:
+                has_archives = _table_exists(db, 'competition_game_archives')
+                batches = self.core.read_batches([*statements, *([archive_query] if has_archives else []), label_query], conn=db)
+                if not has_archives:
+                    batches.insert(3, [])
+        active, recent = ([dict(row) for row in rows] for rows in batches[:2])
+        labels = {}
+        for row in batches[3]:
+            saved = json.loads(row['snapshot'])
+            labels[row['core_game_id']] = {
+                'core_game_id': row['core_game_id'], 'event_id': row['event_id'],
+                'title': row['title'], 'team_a_name': saved['team_a_name'],
+                'team_b_name': saved['team_b_name'], 'winner_name': saved['winner_name']}
+        labels.update({row['core_game_id']: dict(row) for row in batches[4]})
+        return {'active_events': active, 'recent_games': recent,
+                'month_game_count': batches[2][0][0], 'game_labels': labels}
 
     def update_profile(self, token, *, name, description='', founded_on='', capacity=None, contact_url='', expected_updated_at=None):
         """Save a reviewed version; an already applied payload is a harmless retry."""

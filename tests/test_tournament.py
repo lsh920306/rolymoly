@@ -207,8 +207,20 @@ class TournamentTests(unittest.TestCase):
                 self.service.assign_player(self.token, event_id, member, team["id"])
         with self.assertRaises(ValueError):
             self.service.assign_player(self.token, event_id, self.ids[1], teams[1]["id"])
-        self.service.build_bracket(self.token, event_id)
-        self.service.confirm_bracket(self.token, event_id)
+        frozen = self.service.get_event(event_id)["players"]
+        for action in (self.service.build_bracket, self.service.confirm_bracket):
+            # Current eligibility is checked at BOTH boundaries; a historical
+            # score still belongs to the confirmed participant snapshot.
+            with self.core.transaction() as conn:
+                conn.execute("UPDATE members SET status='KICKED' WHERE id=?", (self.ids[1],))
+            with self.assertRaisesRegex(ValueError, "승인"):
+                action(self.token, event_id)
+            with self.core.transaction() as conn:
+                conn.execute("UPDATE members SET status='APPROVED',base_score=999 WHERE id=?", (self.ids[1],))
+            from unittest.mock import patch
+            with patch.object(self.comp, "_player_snapshot", side_effect=AssertionError("per-player read")):
+                action(self.token, event_id)
+            self.assertEqual(self.service.get_event(event_id)["players"], frozen)
         self.service.exclude_participant(self.token, event_id, self.ids[1], "시작 전 불참")
         event = self.service.get_event(event_id)
         self.assertEqual(event["status"], "RECRUITING")

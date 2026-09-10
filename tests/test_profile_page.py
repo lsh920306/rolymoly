@@ -238,6 +238,8 @@ class ProfilePageTests(unittest.TestCase):
         self.assertTrue(any("이용 공간이 변경" in item.value for item in app.info))
 
     def test_team_history_restores_saved_identity_teams_and_sale_points_without_new_requests(self):
+        from tests.test_native_blocks import native_blocks
+        self.enterContext(native_blocks())
         comp = Competition(self.core)
         ids = [self.mid]
         for index in range(1, 20):
@@ -263,7 +265,8 @@ class ProfilePageTests(unittest.TestCase):
             self.assertFalse(any("낙찰 포인트" in frame.value.columns for frame in app.dataframe))
             self.open_records(app)
         loaded.assert_called_once()
-        self.assertEqual(loaded.call_args.kwargs, {"game_limit": 50})
+        self.assertEqual(loaded.call_args.kwargs, {"game_limit": 50, "tournament_limit": 50,
+                                                 "tournament_before_id": None})
         history = next(frame.value for frame in app.dataframe if "낙찰 포인트" in frame.value.columns)
         self.assertEqual(len(history), 2)
         self.assertEqual(set(history["구분"]), {"일반내전", "경매"})
@@ -296,3 +299,26 @@ class ProfilePageTests(unittest.TestCase):
         self.assertEqual(free_history.loc[free_history["구분"] == "경매", "낙찰 포인트"].tolist(), ["0 P"])
         self.assertEqual(comp.get_event(auction_id), original)
         self.assertEqual(comp.get_event(normal_id)["title"], "Saved normal history")
+        baseline = member_records(self.core, self.mid, game_limit=50, tournament_limit=50)
+        saved_row = baseline["tournaments"][0]
+        archive = [dict(saved_row, title=f"Synthetic history {1000 - index}") for index in range(51)]
+        def page_records(_core, member_id, **options):
+            self.assertEqual(member_id, self.mid)
+            self.assertEqual(options["tournament_limit"], 50)
+            older = options["tournament_before_id"] is not None
+            return dict(baseline, tournaments=archive[50:] if older else archive[:50],
+                        tournament_count=51, next_tournament_before_id=None if older else 951)
+        with patch("roly.member_profile_page.member_records", side_effect=page_records) as records:
+            self.open_records(app)
+            frame = next(table.value for table in app.dataframe if "낙찰 포인트" in table.value.columns)
+            self.assertEqual(len(frame), 50)
+            self.assertTrue(any("명단 등록 51개" in item.value for item in app.caption))
+            next(button for button in app.button if button.label == "이전 명단").click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(records.call_args.kwargs["tournament_before_id"], 951)
+            frame = next(table.value for table in app.dataframe if "낙찰 포인트" in table.value.columns)
+            self.assertEqual(frame["내전·경매"].tolist(), ["Synthetic history 950"])
+            self.assertTrue(next(button for button in app.button if button.label == "이전 명단").disabled)
+            next(button for button in app.button if button.label == "최근 명단").click().run()
+            self.assertFalse(app.exception)
+            self.assertIsNone(records.call_args.kwargs["tournament_before_id"])

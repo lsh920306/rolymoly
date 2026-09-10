@@ -333,6 +333,26 @@ class PostgresAdapterTests(unittest.TestCase):
         self.assertEqual(raw.calls, before)
         self.assertTrue(database.in_transaction)
 
+    def test_public_read_aggregates_cannot_be_shadowed_by_application_functions(self):
+        from roly.postgres import _batch_select
+        from roly.core import _MEMBER_SELECT
+        query, params = _batch_select(_MEMBER_SELECT + " WHERE m.id=?", (7,))
+        self.assertIn("pg_catalog.sum(", query)
+        self.assertIn("pg_catalog.count(", query)
+        self.assertEqual(params, (7,))
+        literal, _ = _batch_select("SELECT 'SUM(secret)' AS label, COUNT(*) FROM members", ())
+        self.assertIn("'SUM(secret)'", literal)
+        self.assertIn("pg_catalog.count(*)", literal)
+        for query in ("SELECT private.sum(amount) FROM score_ledger",
+                      "SELECT SUM/*comment*/(amount) FROM score_ledger",
+                      "SELECT 경매.sum(amount) FROM score_ledger",
+                      "SELECT 경매함수(amount) FROM score_ledger",
+                      "SELECT other.pg_catalog.sum(amount) FROM score_ledger",
+                      'SELECT "pg_catalog"."sum"(amount) FROM score_ledger',
+                      "SELECT pg_catalog.pg_sleep(1)", "SELECT sum(amount), nextval('seq') FROM score_ledger"):
+            with self.subTest(query=query), self.assertRaises(sqlite3.ProgrammingError):
+                _batch_select(query, ())
+
     def test_delayed_batch_error_is_sanitized_and_caller_owns_rollback(self):
         for phase in ("sync", "fetch"):
             with self.subTest(phase=phase):

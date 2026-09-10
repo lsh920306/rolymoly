@@ -152,6 +152,26 @@ class Core(PersonalAuth):
                 db.execute("BEGIN")
                 yield db
 
+    def read_batches(self, statements, conn=None):
+        """Materialize independent reads in one snapshot, without retaining a lease.
+
+        An existing transaction remains owned by its caller. The PostgreSQL
+        path also sends setup and rollback together when this method owns it.
+        """
+        statements = list(statements)
+        if not statements:
+            return []
+        if conn is not None:
+            batch = getattr(conn, "fetch_batches", None)
+            if callable(batch):
+                return batch(statements) if conn.in_transaction else conn.fetch_snapshot_batches(statements)
+            return [conn.execute(q, p).fetchall() for q, p in statements]
+        if self.is_postgres:
+            with closing(self.connect()) as db:
+                return db.fetch_snapshot_batches(statements)
+        with self.read_snapshot() as db:
+            return [db.execute(q, p).fetchall() for q, p in statements]
+
     def initialize(self):
         if self.is_postgres:
             from .postgres import initialize
@@ -228,8 +248,7 @@ class Core(PersonalAuth):
         db.execute("INSERT INTO audit(actor_id,action,target,details,created_at) VALUES(?,?,?,?,?)", (actor_id, action, str(target), json.dumps(details, ensure_ascii=False, default=str), now()))
 
     def has_admin(self):
-        with closing(self.connect()) as db:
-            return bool(self._active_admins(db))
+        return bool(self.read_batches([("SELECT a.id FROM accounts a LEFT JOIN members m ON m.id=a.member_id WHERE a.role='admin' AND a.active=1 AND (a.member_id IS NULL OR m.status='APPROVED') LIMIT 1", ())])[0])
 
     @staticmethod
     def _active_admins(db):
@@ -308,9 +327,8 @@ class Core(PersonalAuth):
     def session(self, token, conn=None):
         if not token:
             return None
-        with self.read_snapshot(conn) as db:
-            result = db.execute(*session_query(token)).fetchone()
-            return dict(result) if result else None
+        rows = self.read_batches([session_query(token)], conn=conn)[0]
+        return dict(rows[0]) if rows else None
 
     def require_staff(self, conn, token):
         actor = self.session(token, conn)
@@ -410,11 +428,10 @@ class Core(PersonalAuth):
         return row["score"]
 
     def get_member(self, member_id, conn=None):
-        with self.read_snapshot(conn) as db:
-            row = db.execute(_MEMBER_SELECT + " WHERE m.id=?", (member_id,)).fetchone()
-            if not row:
-                raise ValueError("회원을 찾을 수 없습니다.")
-        return self._member_record(row)
+        rows = self.read_batches([(_MEMBER_SELECT + " WHERE m.id=?", (member_id,))], conn=conn)[0]
+        if not rows:
+            raise ValueError("회원을 찾을 수 없습니다.")
+        return self._member_record(rows[0])
 
     @staticmethod
     def _member_record(row):
@@ -428,10 +445,16 @@ class Core(PersonalAuth):
         return result
 
     def list_members(self, include_pending=False):
-        with self.read_snapshot() as db:
-            order = ' ORDER BY m.riot_id COLLATE "C"' if self.is_postgres else " ORDER BY m.riot_id"
-            rows = db.execute(_MEMBER_SELECT + " WHERE (?=1 OR m.status='APPROVED')" + order, (int(bool(include_pending)),)).fetchall()
+        order = ' ORDER BY m.riot_id COLLATE "C"' if self.is_postgres else " ORDER BY m.riot_id"
+        rows = self.read_batches([(_MEMBER_SELECT + " WHERE (?=1 OR m.status='APPROVED')" + order, (int(bool(include_pending)),))])[0]
         return [self._member_record(row) for row in rows]
+
+    def member_status_counts(self):
+        rows = self.read_batches([("""SELECT m.status,r.status AS registration_status,COUNT(*) AS total
+            FROM members m LEFT JOIN registration_requests r ON r.member_id=m.id
+            GROUP BY m.status,r.status""", ())])[0]
+        return {"approved": sum(row["total"] for row in rows if row["status"] == "APPROVED"),
+                "pending": sum(row["total"] for row in rows if row["status"] == "PENDING" and row["registration_status"] != "REJECTED")}
 
     def approve_member(self, token, member_id, base_score, notes="", *, expected_updated_at=None):
         base_score = integer(base_score, "기본점수")
@@ -616,8 +639,7 @@ class Core(PersonalAuth):
             return result
 
     def policy(self, conn=None, at=None):
-        with self.read_snapshot(conn) as db:
-            return dict(db.execute("SELECT * FROM policies WHERE effective_at<=? ORDER BY effective_at DESC,id DESC LIMIT 1", (at or now(),)).fetchone())
+        return dict(self.read_batches([("SELECT * FROM policies WHERE effective_at<=? ORDER BY effective_at DESC,id DESC LIMIT 1", (at or now(),))], conn=conn)[0][0])
 
     def policy_history(self):
         with self.read_snapshot() as db:
@@ -831,21 +853,39 @@ class Core(PersonalAuth):
     def void_game(self, token, game_id, reason, conn=None):
         return self._revise_game(token, game_id, None, reason, True, conn)
 
-    def list_games(self, kind=None):
-        with self.read_snapshot() as db:
-            return [dict(r) for r in db.execute("SELECT g.*,a.display_name AS actor_name FROM games g JOIN accounts a ON a.id=g.actor_id WHERE (CAST(? AS TEXT) IS NULL OR kind=?) ORDER BY g.id DESC", (kind, kind))]
+    def list_games(self, kind=None, *, limit=None, before_id=None):
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 1000):
+            raise ValueError("경기 조회 개수를 확인해 주세요.")
+        conditions, parameters = [], []
+        if kind is not None:
+            conditions.append("g.kind=?")
+            parameters.append(kind)
+        if before_id is not None:
+            conditions.append("g.id<?")
+            parameters.append(integer(before_id, "경기 번호"))
+        query = "SELECT g.*,a.display_name AS actor_name FROM games g JOIN accounts a ON a.id=g.actor_id"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY g.id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(limit)
+        return [dict(row) for row in self.read_batches([(query, tuple(parameters))])[0]]
 
     def get_game(self, game_id, conn=None):
-        with self.read_snapshot(conn) as db:
-            row = db.execute("SELECT * FROM games WHERE id=?", (game_id,)).fetchone()
-            if not row:
-                raise ValueError("경기를 찾을 수 없습니다.")
-            result = dict(row)
-            result["players"] = [dict(r) for r in db.execute("SELECT p.*,COALESCE(p.riot_id_snapshot,m.riot_id) AS riot_id,m.riot_id AS current_riot_id,p.clan_tier_snapshot AS clan_tier,p.current_tier_snapshot AS current_tier,p.current_tier_lp_snapshot AS current_tier_lp FROM game_players p JOIN members m ON m.id=p.member_id WHERE game_id=? ORDER BY team,role", (game_id,))]
-            result["ledger"] = [dict(r) for r in db.execute("SELECT * FROM score_ledger WHERE game_id=? ORDER BY id", (game_id,))]
-            result["revisions"] = [dict(r) for r in db.execute("SELECT * FROM game_revisions WHERE game_id=? ORDER BY revision", (game_id,))]
-            result["settlements"] = [dict(r) for r in db.execute("SELECT * FROM game_settlements WHERE game_id=? ORDER BY revision,member_id", (game_id,))]
-            return result
+        batches = self.read_batches([
+            ("SELECT * FROM games WHERE id=?", (game_id,)),
+            ("SELECT p.*,COALESCE(p.riot_id_snapshot,m.riot_id) AS riot_id,m.riot_id AS current_riot_id,p.clan_tier_snapshot AS clan_tier,p.current_tier_snapshot AS current_tier,p.current_tier_lp_snapshot AS current_tier_lp FROM game_players p JOIN members m ON m.id=p.member_id WHERE game_id=? ORDER BY team,role", (game_id,)),
+            ("SELECT * FROM score_ledger WHERE game_id=? ORDER BY id", (game_id,)),
+            ("SELECT * FROM game_revisions WHERE game_id=? ORDER BY revision", (game_id,)),
+            ("SELECT * FROM game_settlements WHERE game_id=? ORDER BY revision,member_id", (game_id,)),
+        ], conn=conn)
+        if not batches[0]:
+            raise ValueError("경기를 찾을 수 없습니다.")
+        result = dict(batches[0][0])
+        result.update({key: [dict(row) for row in rows]
+                       for key, rows in zip(("players", "ledger", "revisions", "settlements"), batches[1:])})
+        return result
 
     def _validate_event_award(self, db, actor, event_id, member_ids, units):
         """A supplied transaction is not an authorization capability."""
@@ -862,10 +902,11 @@ class Core(PersonalAuth):
         games = db.execute("SELECT * FROM competition_games WHERE event_id=?", (event_id,)).fetchall()
         if not games or any(g["status"] not in ("COMPLETED", "BYE") for g in games):
             raise ValueError("모든 대회 경기를 완료한 뒤 보상을 확정해주세요.")
+        results = {row["id"]: row for row in db.execute("SELECT * FROM games WHERE tournament_id=? AND kind='AUCTION'", (str(event_id),))}
         for game in games:
             if game["status"] == "BYE":
                 continue
-            result = db.execute("SELECT * FROM games WHERE id=?", (game["core_game_id"],)).fetchone()
+            result = results.get(game["core_game_id"])
             if not result or result["status"] != "CONFIRMED" or result["kind"] != "AUCTION" or str(result["tournament_id"]) != str(event_id):
                 raise ValueError("대회 경기와 확정된 경기 기록이 일치하지 않습니다.")
             actual_winner = game["team_a"] if result["winner"] == "A" else game["team_b"]
@@ -918,8 +959,8 @@ class Core(PersonalAuth):
                 if balance + units < 0:
                     raise ValueError("보상을 보유량보다 많이 회수할 수 없습니다.")
             batch_id = db.execute("INSERT INTO award_batches(request_key,fingerprint,event_id,reason,actor_id,created_at) VALUES(?,?,?,?,?,?)", (str(request_key), fingerprint, None if event_id is None else str(event_id), reason, actor["id"], now())).lastrowid
-            for member_id in member_ids:
-                db.execute("INSERT INTO award_ledger(batch_id,member_id,units,reason,created_at) VALUES(?,?,?,?,?)", (batch_id, member_id, units, reason, now()))
+            self._write_statements(db, [("INSERT INTO award_ledger(batch_id,member_id,units,reason,created_at) VALUES(?,?,?,?,?)",
+                (batch_id, member_id, units, reason, now())) for member_id in member_ids])
             self._audit(db, actor, "AWARD_GRANT", batch_id, {"member_ids": member_ids, "units": units, "event_id": event_id, "reason": reason})
             return batch_id
 

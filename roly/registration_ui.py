@@ -128,9 +128,11 @@ def participants_dialog(service, token, event_id):
             base = {"token": event["roster_token"], "players": event["players"]}
             st.session_state[base_key] = base
             stale = False
-    assignments = roster_editor(service.core.list_members(), key=f"t_roster_{event_id}",
+    matching_members = service.core.list_members(include_pending=True)
+    members = [member for member in matching_members if member["status"] == "APPROVED"]
+    assignments = roster_editor(members, key=f"t_roster_{event_id}",
         team_count=event["team_count"], saved=base["players"], strict_roles=False,
-        matching_members=service.core.list_members(include_pending=True), revision=(actor['id'] if actor else None, base["token"]))
+        matching_members=matching_members, revision=(actor['id'] if actor else None, base["token"]))
     if st.button("참가 명단 저장", type="primary", disabled=stale, key=f"t_save_roster_{event_id}") and not stale:
         def save():
             service.set_participants(token, event_id, assignments, expected_roster_token=base["token"])

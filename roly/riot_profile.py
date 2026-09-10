@@ -82,12 +82,12 @@ def member_profiles(core, member_ids):
     if not ids:
         return {}
     results = {}
-    rows = []
-    with closing(core.connect()) as db:
-        for offset in range(0, len(ids), 100):
-            batch = ids[offset:offset + 100]
-            marks = ",".join("?" for _ in batch)
-            rows.extend(db.execute(f"SELECT m.id,rp.payload,{RANK_SELECT} FROM members m JOIN riot_profiles rp ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id {RANK_JOINS} WHERE m.id IN ({marks}) AND m.status='APPROVED'", batch).fetchall())
+    statements = []
+    for offset in range(0, len(ids), 100):
+        batch = ids[offset:offset + 100]
+        marks = ",".join("?" for _ in batch)
+        statements.append((f"SELECT m.id,rp.payload,{RANK_SELECT} FROM members m JOIN riot_profiles rp ON rp.member_id=m.id AND rp.canonical_id=m.canonical_id {RANK_JOINS} WHERE m.id IN ({marks}) AND m.status='APPROVED'", batch))
+    rows = [row for batch in core.read_batches(statements) for row in batch]
     for row in rows:
         profile = public_profile(profile_projection(row["payload"], row))
         if profile:

@@ -80,14 +80,14 @@ respond(calls[2],{request:JSON.parse(calls[2].options.body),ack:{...command,stat
 assert.equal(peer.sent.length,1,'socket must never carry a bid');
 """)
 
-    def test_commit_order_and_cold_sections_survive_small_hot_updates(self):
+    def test_commit_order_keeps_exact_view_deltas(self):
         self.run_js(r"""
 const peer=subscribe();snapshot(peer,4,{views:{teams:{id:'roster'},queue:{id:'queue'},history:{id:'old'}}});
 peer.receive(frame(6,'state',{views:{history:{id:'new'}},lot:{id:12}}));
 peer.receive(frame(5,'state',{lot:{id:1}}));peer.receive(frame(6,'state',{lot:{id:2}}));
 assert.equal(frames.length,2);assert.equal(frames[1].panel.lot.id,12);
-assert.deepEqual(frames[1].panel.views,{teams:{id:'roster'},queue:{id:'queue'},history:{id:'new'}});
-peer.receive(frame(8,'state',{lot:{id:13}}));assert.equal(frames.at(-1).panel.views.queue.id,'queue');
+assert.deepEqual(frames[1].panel.views,{history:{id:'new'}});
+peer.receive(frame(8,'state',{lot:{id:13}}));assert.equal(Object.hasOwn(frames.at(-1).panel,'views'),false);
 """)
 
     def test_disconnect_backoff_full_reconnect_and_old_socket_are_bounded(self):
@@ -135,6 +135,53 @@ const peer=subscribe();snapshot(peer);
 const partial=frame(2);delete partial.panel.lot;peer.receive(partial);
 assert.equal(frames.length,1);assert.equal(delivery.stopped(),true);
 """)
+
+    def test_exact_hot_deltas_keep_recovery_cache_and_reconnect_replaces_it(self):
+        self.run_js(r"""
+cleanup();delete parent._rolyLivePanel;sent.length=0;
+globalThis.location=new URL('https://example.test/~/+/auction');
+const peers=[],published=[];
+globalThis.CustomEvent=class {constructor(type,init){this.type=type;this.detail=init.detail;}};
+globalThis.dispatchEvent=event=>{
+ if(event.type==='roly-auction-frame' && Object.hasOwn(event.detail,'views'))published.push(event.detail.views);
+ for(const fn of listeners.get(event.type) || [])fn(event);
+};
+globalThis.fetch=()=>new Promise(()=>{});
+globalThis.WebSocket=class {
+ constructor(){this.sent=[];peers.push(this);}
+ send(value){this.sent.push(JSON.parse(value));}close(){}
+};
+storage.set('login-key','test-token-with-at-least-twenty-characters');
+data={...data,direct:{live_url:'/api/auction/live',bid_url:'/api/auction/bid',ws_url:'/api/auction/ws',epoch:'server-one',event_id:3,storage_key:'login-key'},
+ transport:{context:'account-event',frame_id:0,request:null}};
+const dispose=show();let peer=peers[0];peer.onopen();
+const receive=(revision,views,type='state',detailRevision=revision)=>peer.onmessage({data:JSON.stringify({
+ type,epoch:'server-one',context:'account-event',revision,detail_revision:detailRevision,
+ panel:{...data,...(views===undefined?{}:{views}),server_now:1000.2,
+  transport:{context:'account-event',request:type==='snapshot'?peer.sent[0]:null,server_elapsed_ms:20}}})});
+receive(1,{event_status:'RUNNING',teams:{1:{id:'team'}},queue:{id:'queue'},remaining:{id:'remaining'},
+ overview:{id:'overview'},history:{id:'old'},sound:{id:'old'}},'snapshot');
+const original=globalThis._rolyAuctionViews.get('account-event');
+published.length=0;
+receive(2,{history:{id:'new'},sound:{id:'new'}});
+assert.deepEqual(published,[{history:{id:'new'},sound:{id:'new'}}],
+ 'unchanged cards must not be redispatched to companion renderers');
+const cached=globalThis._rolyAuctionViews.get('account-event');
+assert.equal(cached.teams,original.teams);assert.equal(cached.queue,original.queue);
+assert.equal(cached.history.id,'new','newly mounted companions still recover the latest sections');
+receive(3,undefined);assert.equal(published.length,1,'a hot panel without views must not resend cached cards');
+receive(4,{queue:null});assert.deepEqual(published.at(-1),{queue:null});
+assert.equal(Object.hasOwn(globalThis._rolyAuctionViews.get('account-event'),'queue'),false);
+receive(5,{teams:{1:{id:'stale'}}},'state',1);
+assert.equal(published.length,2,'an older detail revision cannot republish or replace cards');
+assert.equal(globalThis._rolyAuctionViews.get('account-event').teams,original.teams);
+peer.onclose();clock+=1000;parent._rolyLivePanel.delivery.tick();peer=peers[1];peer.onopen();
+receive(5,{event_status:'RUNNING',teams:{1:{id:'restored'}}},'snapshot',5);
+assert.deepEqual(globalThis._rolyAuctionViews.get('account-event'),
+ {event_status:'RUNNING',teams:{1:{id:'restored'}}},'full reconnect removes omitted old sections');
+receive(6,null);assert.equal(globalThis._rolyAuctionViews.get('account-event'),null);
+dispose();await Promise.resolve();
+""", dom=True)
 
     def test_component_keeps_socket_on_repaint_and_cleans_final_unmount(self):
         self.run_js(r"""

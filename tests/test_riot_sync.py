@@ -512,6 +512,49 @@ class RiotSyncTests(unittest.TestCase):
                 worker.join(timeout=5)
             self.assertFalse(worker.is_alive())
 
+    def test_future_queue_lease_and_rate_hints_share_status_and_wake_on_changes(self):
+        import roly.riot_sync as runtime
+        self.sync.enqueue(self.admin, [self.mid])
+        for status, next_in, lease_in, expected_wait in (("QUEUED", 12, 0, 5), ("RUNNING", 1, 3, 3)):
+            with self.subTest(status=status):
+                with self.core.transaction() as db:
+                    db.execute("UPDATE riot_jobs SET status=?,next_attempt=?,lease_until=? WHERE member_id=?",
+                               (status, self.clock.value + next_in, self.clock.value + lease_in, self.mid))
+                with patch.object(self.sync.limiter, "status", wraps=self.sync.limiter.status) as rate, \
+                        patch.object(self.core, "read_batches", wraps=self.core.read_batches) as reads:
+                    self.assertFalse(self.sync.process_one())
+                    self.assertTrue(self.sync._pending_work())
+                    self.assertEqual(rate.call_count, 1)
+                    self.assertEqual(reads.call_count, 1)
+                    self.assertEqual(self.sync._schedule.delay, expected_wait)
+        self.sync.limiter.backoff(RiotAPIError("rate_limited", retry_after=45))
+        with patch.object(self.sync.limiter, "status", wraps=self.sync.limiter.status) as rate:
+            self.assertFalse(self.sync.process_one())
+            self.assertTrue(self.sync._pending_work())
+            self.assertEqual(rate.call_count, 1)
+            self.assertEqual(self.sync._schedule.delay, runtime.WORKER_MAX_WAIT)
+        self.assertEqual(self.sync.client.calls, [])
+
+        # A queue wake does not bypass the shared cooldown. It only interrupts
+        # the scheduling wait, and old resource owners can still stop directly.
+        wake = Event()
+        stop = runtime._WorkerStop(wake)
+        thread = SimpleNamespace(is_alive=lambda: True)
+        state = {"stop": stop, "wake": wake, "generation": 0, "key_hash": self.sync.key_hash,
+                 "rate_path": self.core.db_path, "thread": thread}
+        other = self.member("WakeQueued")
+        with patch.object(runtime, "_workers", {self.core.db_path: state}):
+            self.sync.enqueue(self.admin, [other])
+            self.assertTrue(wake.is_set())
+            self.assertEqual(state["generation"], 1)
+            wake.clear()
+            self.assertIs(self.sync.ensure_worker(), thread)
+            self.assertTrue(wake.is_set())
+            wake.clear()
+            self.assertEqual(runtime.stop_workers_except_key(RiotConfig("replacement-synthetic-key")), 1)
+            self.assertTrue(stop.is_set())
+            self.assertTrue(wake.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -60,22 +60,31 @@ class ResultRevisionService:
             raise ValueError("실제 결과가 확정된 경기를 선택해 주세요.")
         if winner_team_id not in (game["team_a"], game["team_b"]) or winner_team_id == game["winner_team_id"]:
             raise ValueError("현재 결과와 다른 실제 참가 팀을 정정 후 승리팀으로 선택해 주세요.")
+        core_games = [dict(r) for r in conn.execute("SELECT * FROM games WHERE tournament_id=? ORDER BY id", (str(event_id),))]
+        by_id = {result["id"]: result for result in core_games}
         for fixture in games:
             if fixture["status"] != "COMPLETED":
                 continue
-            result = conn.execute("SELECT * FROM games WHERE id=?", (fixture["core_game_id"],)).fetchone()
+            result = by_id.get(fixture["core_game_id"])
             if (not result or result["status"] != "CONFIRMED" or result["kind"] != "AUCTION"
                     or str(result["tournament_id"]) != str(event_id)
                     or fixture["winner_team_id"] != fixture["team_a" if result["winner"] == "A" else "team_b"]):
                 raise ValueError("대진과 실제 경기 원장이 일치하지 않습니다. 원장 상태를 먼저 확인해 주세요.")
-        return actor, event, games, game
+        return actor, event, games, game, core_games
 
-    def _fingerprint(self, conn, event, games):
-        core_games = [dict(r) for r in conn.execute("SELECT * FROM games WHERE tournament_id=? ORDER BY id", (str(event["id"]),))]
-        players = [dict(r) for r in conn.execute("SELECT * FROM competition_players WHERE event_id=? ORDER BY id", (event["id"],))]
-        teams = [dict(r) for r in conn.execute("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event["id"],))]
-        awards = [dict(r) for r in conn.execute("SELECT * FROM award_batches WHERE event_id=? ORDER BY id", (str(event["id"]),))]
-        ledger = [dict(r) for r in conn.execute("SELECT p.* FROM game_players p JOIN games g ON g.id=p.game_id WHERE g.tournament_id=? ORDER BY p.game_id,p.member_id", (str(event["id"]),))]
+    def _fingerprint(self, conn, event, games, core_games=None):
+        statements = [
+            ("SELECT * FROM competition_players WHERE event_id=? ORDER BY id", (event["id"],)),
+            ("SELECT * FROM competition_teams WHERE event_id=? ORDER BY id", (event["id"],)),
+            ("SELECT * FROM award_batches WHERE event_id=? ORDER BY id", (str(event["id"]),)),
+            ("SELECT p.* FROM game_players p JOIN games g ON g.id=p.game_id WHERE g.tournament_id=? ORDER BY p.game_id,p.member_id", (str(event["id"]),)),
+        ]
+        if core_games is None:
+            statements.append(("SELECT * FROM games WHERE tournament_id=? ORDER BY id", (str(event["id"]),)))
+        batches = self.core.read_batches(statements, conn=conn)
+        players, teams, awards, ledger = ([dict(r) for r in rows] for rows in batches[:4])
+        if core_games is None:
+            core_games = [dict(r) for r in batches[4]]
         payload = [event, games, core_games, players, teams, awards, ledger]
         return hashlib.sha256(_json(payload).encode()).hexdigest()
 
@@ -111,9 +120,9 @@ class ResultRevisionService:
         if not reason or len(reason) > 1000:
             raise ValueError("정정 사유를 1~1,000자로 입력해 주세요.")
         with self.core.transaction() as conn:
-            actor, event, games, game = self._validate(conn, token, event_id, game_id, winner_team_id)
+            actor, event, games, game, core_games = self._validate(conn, token, event_id, game_id, winner_team_id)
             affected = self._affected(conn, event, games, game)
-            fingerprint = self._fingerprint(conn, event, games)
+            fingerprint = self._fingerprint(conn, event, games, core_games)
             names = {r["id"]: r["name"] for r in conn.execute("SELECT id,name FROM competition_teams WHERE event_id=?", (event_id,))}
             # Simulate only derived fixtures inside a savepoint. The simulation
             # cannot leak any changed results, ledger entries or attempts.
@@ -160,8 +169,8 @@ class ResultRevisionService:
                 return json.loads(preview["result_json"])
             if self.clock() >= datetime.fromisoformat(preview["expires_at"]):
                 raise ValueError("미리보기 확인 시간이 지났습니다. 최신 영향 범위를 다시 확인해 주세요.")
-            actor, event, games, game = self._validate(conn, token, preview["event_id"], preview["game_id"], preview["winner_team_id"])
-            if not hmac.compare_digest(preview["fingerprint"], self._fingerprint(conn, event, games)):
+            actor, event, games, game, core_games = self._validate(conn, token, preview["event_id"], preview["game_id"], preview["winner_team_id"])
+            if not hmac.compare_digest(preview["fingerprint"], self._fingerprint(conn, event, games, core_games)):
                 raise ValueError("미리보기 이후 경기 또는 대회 상태가 바뀌었습니다. 최신 영향 범위를 다시 확인해 주세요.")
             affected = self._affected(conn, event, games, game)
             stamp = self.clock().isoformat()

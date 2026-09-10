@@ -1,6 +1,7 @@
 """Domain integration checks using isolated SQLite memory databases."""
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from roly.core import Core
 from roly.competition import Competition, ROLES, auction_budget, balance_teams
@@ -53,6 +54,12 @@ class CompetitionTests(unittest.TestCase):
             self.assertEqual(len({p["member_id"] for t in event["teams"] for p in t["players"]}), count)
             for team in event["teams"]:
                 self.assertEqual({p["role"] for p in team["players"]}, set(ROLES))
+            with self.core.transaction() as conn:
+                trace = []
+                conn.set_trace_callback(trace.append)
+                self.comp._propagate(conn, event["id"])
+                conn.set_trace_callback(None)
+            self.assertFalse(any(sql.startswith("UPDATE competition_games") for sql in trace))
         with self.assertRaises(ValueError):
             self.comp.create_normal(self.token, [{"member_id": self.ids[0], "role": r} for r in ROLES] * 2)
         players = [{"member_id": i, "role": ROLES[i % 5], "score": i // 5 * 100} for i in range(10)]
@@ -131,6 +138,9 @@ class CompetitionTests(unittest.TestCase):
         class BatchReader:
             def __init__(self):
                 self.db = connect()
+            @property
+            def in_transaction(self):
+                return self.db.in_transaction
             def execute(self, *args):
                 return self.db.execute(*args)
             def fetch_batches(self, statements):
@@ -149,6 +159,17 @@ class CompetitionTests(unittest.TestCase):
                 self.comp, "_standings_from_rows", side_effect=format_standings):
             self.assertEqual(self.comp.get_event(event_id), expected)
         self.assertEqual(calls, [5])
+
+        # The archive table is optional for legacy SQLite, but joins the same
+        # snapshot once result correction has initialized it.
+        from roly.result_revision import ResultRevisionService
+        ResultRevisionService(self.core, self.comp)
+        calls.clear()
+        released.clear()
+        with patch.object(self.core, "connect", side_effect=BatchReader), patch.object(
+                self.comp, "_standings_from_rows", side_effect=format_standings):
+            self.assertEqual(self.comp.get_event(event_id), expected)
+        self.assertEqual(calls, [6])
 
     def test_policy_changes_apply_to_new_competitions(self):
         old_event = self.normal()
@@ -308,6 +329,38 @@ class CompetitionTests(unittest.TestCase):
         self.assertEqual(self.comp.get_event(auction)["status"], "PLAYING")
         self.assertTrue(all(m["award_units"] == 0 for m in self.core.list_members()))
         self.comp.finalize_event(self.token, auction)
+
+
+class CompetitionBatchTests(unittest.TestCase):
+    def test_postgres_flat_schedule_and_changed_winner_loser_updates(self):
+        comp = Competition.__new__(Competition)
+        comp.service = SimpleNamespace(is_postgres=True)
+        conn = Mock()
+        comp._round_robin(conn, 9, list(range(1, 9)), "A", "TIEBREAK", 1000)
+        conn.execute.assert_not_called()
+        conn.execute_batch.assert_called_once()
+        rows = [params for query, params in conn.execute_batch.call_args.args[0]]
+        self.assertEqual(len(rows), 28)
+        self.assertEqual({frozenset(row[5:7]) for row in rows},
+                         {frozenset((a, b)) for a in range(1, 9) for b in range(a + 1, 9)})
+        self.assertEqual([(row[1], row[2]) for row in rows],
+                         [(r, p) for r in range(1001, 1008) for p in range(1, 5)])
+        self.assertTrue(all(row[0] == 9 and row[3:5] == ("A", "TIEBREAK") and row[7:] == (None, None) for row in rows))
+
+        source = dict(id=1, status="COMPLETED", team_a=10, team_b=20, winner_team_id=20)
+        pending = dict(status="PENDING", source_b=None, team_b=30, winner_team_id=None)
+        final = dict(pending, id=2, source_a=1, source_a_result="WINNER", team_a=10)
+        third = dict(pending, id=3, source_a=1, source_a_result="LOSER", team_a=20)
+        untouched = dict(pending, id=4, source_a=None, team_a=40)
+        conn.execute.return_value.fetchall.return_value = [source, final, third, untouched]
+        conn.execute_batch.reset_mock()
+        comp._propagate(conn, 9)
+        conn.execute_batch.assert_called_once()
+        self.assertEqual([params for query, params in conn.execute_batch.call_args.args[0]], [(20, 30, 2), (10, 30, 3)])
+        final["team_a"], third["team_a"] = 20, 10
+        conn.execute_batch.reset_mock()
+        comp._propagate(conn, 9)
+        conn.execute_batch.assert_not_called()
 
 
 if __name__ == "__main__":

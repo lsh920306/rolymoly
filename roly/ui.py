@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 import secrets
 import sqlite3
+from contextvars import ContextVar
 
 import pandas as pd
 import streamlit as st
@@ -20,6 +21,7 @@ ROLE_NAMES = {"TOP": "탑", "JG": "정글", "MID": "미드", "AD": "원딜", "SU
 STATUS = {"DRAFT": "경매 준비", "RECRUITING": "참가자 모집", "CAPTAIN_SELECTION": "팀장 지정", "TEAM_BUILDING": "팀 구성", "AUCTION_READY": "경매 준비", "AUCTION": "경매 중", "BRACKET_SETUP": "대진 준비", "READY": "경기 준비", "PLAYING": "진행 중", "IN_PROGRESS": "진행 중", "COMPLETED": "종료", "CANCELLED": "취소"}
 FORMATS = {"SINGLE": "단판", "LEAGUE": "풀리그", "TOURNAMENT": "토너먼트", "GROUP_STAGE": "조별리그 + 결승", "RANKING": "4팀 순위 결정전"}
 KINDS = {"NORMAL": "일반내전", "AUCTION": "경매"}
+_page_scope = ContextVar("roly_page_scope", default=None)
 
 
 def services(path):
@@ -37,9 +39,33 @@ services.clear = _clear_services
 
 
 def context():
-    core, competition = services(st.session_state.db_path)
     token = st.session_state.get("token")
+    scope = _current_page_scope()
+    if scope is not None:
+        return scope["context"]
+    core, competition = services(st.session_state.db_path)
     return core, competition, token, core.session(token) if token else None
+
+
+def _current_page_scope():
+    scope = _page_scope.get()
+    if scope is not None:
+        core, _, token, _ = scope["context"]
+        if str(core.db_path) == str(st.session_state.get("db_path")) and token == st.session_state.get("token"):
+            return scope
+    return None
+
+
+def in_page_run():
+    """True only while the shell invokes this page, never between reruns."""
+    return _current_page_scope() is not None
+
+
+def lounge_profile(path):
+    scope = _current_page_scope()
+    if scope is not None and str(scope["context"][0].db_path) == str(path):
+        return dict(scope["profile"])
+    return lounge_service(path).profile()
 
 
 def deferred_csv(core, rows, *, token=None, admin=False):
@@ -247,12 +273,14 @@ def run():
             riot_service(core)
         except (ConfigError, sqlite3.Error):
             pass  # The member refresh control provides the actionable message.
-    actor = core.session(st.session_state.get("token")) if st.session_state.get("token") else None
+    actor_token = st.session_state.get("token")
+    actor = core.session(actor_token) if actor_token else None
     if st.session_state.get("token") and not actor:
         clear_login()
         st.rerun()
     with st.sidebar:
-        contact = lounge_service(db_path).profile()["contact_url"]
+        profile = lounge_service(db_path).profile()
+        contact = profile["contact_url"]
         if contact:
             st.link_button("클랜 연락 링크", contact, icon=":material/link:", width="stretch")
         if deployment.allow_demo:
@@ -376,4 +404,9 @@ def run():
             st.info("가입 승인 후 이용할 수 있습니다. 내 계정에서 신청 상태를 확인해 주세요.")
             st.page_link("app_pages/join.py", label="회원가입 상태 확인", icon=":material/person:")
             st.stop()
-        page.run()
+        scope = _page_scope.set({"context": (core, competition, actor_token, actor), "profile": profile})
+        try:
+            page.run()
+        finally:
+            # Dialog/fragment reruns must not inherit an earlier page's actor.
+            _page_scope.reset(scope)

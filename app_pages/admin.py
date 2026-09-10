@@ -71,21 +71,25 @@ heading("운영 관리", "회원 승인, 점수·업적 조정, 운영 계정과
 require_staff(actor, admin=True)
 st.session_state.setdefault("admin_award_request", f"manual-award:{uuid4().hex}")
 
-members = core.list_members(include_pending=True)
-member_map = {member["id"]: member for member in members}
-pending = [member for member in members if member["status"] == "PENDING" and member.get("registration_status") != "REJECTED"]
-active_members = [member for member in members if member["status"] == "APPROVED"]
-current_policy = core.policy()
-
-with st.container(horizontal=True):
-    st.metric("승인 대기", f"{len(pending)}명", border=True)
-    st.metric("활동 회원", f"{len(active_members)}명", border=True)
-    st.metric("현재 일반내전 증감", f"±{current_policy['k']}점", border=True)
+summary_area = st.container(horizontal=True)
 
 join_tab, members_tab, policy_tab, awards_tab, accounts_tab, audit_tab = st.tabs(
     ["가입 승인", "회원·점수", "점수 정책", "업적 관리", "운영 계정", "변경 기록"],
     key="admin_active_tab", on_change="rerun",
 )
+
+members = core.list_members(include_pending=True) if any(
+    tab.open for tab in (join_tab, members_tab, awards_tab, accounts_tab)) else []
+member_map = {member["id"]: member for member in members}
+pending = [member for member in members if member["status"] == "PENDING" and member.get("registration_status") != "REJECTED"]
+active_members = [member for member in members if member["status"] == "APPROVED"]
+counts = ({"pending": len(pending), "approved": len(active_members)}
+          if any(tab.open for tab in (join_tab, members_tab, awards_tab, accounts_tab)) else core.member_status_counts())
+current_policy = core.policy()
+with summary_area:
+    st.metric("승인 대기", f"{counts['pending']}명", border=True)
+    st.metric("활동 회원", f"{counts['approved']}명", border=True)
+    st.metric("현재 일반내전 증감", f"±{current_policy['k']}점", border=True)
 
 if join_tab.open:
     with join_tab:

@@ -216,11 +216,7 @@ def _database_error(error):
 
 
 def _batch_select(query, parameters):
-    """Accept plain SELECTs plus one exact, schema-qualified DB clock sample.
-
-    This internal batch API only needs the auction's independent row queries.
-    Values remain bound parameters; it is not a general SQL execution API.
-    """
+    """Accept read queries and a small set of catalog-qualified aggregates."""
     if not isinstance(query, str):
         raise TypeError("SQL은 문자열로 전달해 주세요.")
     statements = list(_script_statements(query))
@@ -239,9 +235,27 @@ def _batch_select(query, parameters):
     if (not re.match(r"\s*SELECT\b", code, re.IGNORECASE)
             or re.search(r"\b(?:WITH|INSERT|UPDATE|DELETE|MERGE|INTO|FOR|LOCK|CALL|DO|COPY|TRUNCATE|CREATE|ALTER|DROP|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|SET|RESET)\b", code, re.IGNORECASE)):
         raise sqlite3.ProgrammingError("조회 묶음에는 읽기 전용 SELECT만 사용할 수 있습니다.")
-    for match in re.finditer(r"\b([A-Za-z_][A-Za-z_0-9]*)\s*\(", code):
-        if match.group(1).upper() not in {"SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "EXISTS", "COALESCE"}:
+    aggregates = {"COUNT", "SUM", "MIN", "MAX", "AVG"}
+    calls = re.compile(r"\b((?:[\w$]+\s*\.\s*)*)([\w$]+)\s*\(")
+    for match in calls.finditer(code):
+        prefix, name = match.groups()
+        schema = re.sub(r"\s+", "", prefix).lower()
+        if name.upper() in aggregates and schema in ("", "pg_catalog."):
+            continue
+        if schema or name.upper() not in {"SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "EXISTS", "COALESCE"}:
             raise sqlite3.ProgrammingError("조회 묶음에서는 SQL 함수 호출을 사용할 수 없습니다.")
+    # Keep application schemas from shadowing the built-in aggregates. Never
+    # rewrite parameter values, quoted identifiers, comments or string literals.
+    aggregate_call = re.compile(r"(?<![\w$.])(?:pg_catalog\s*\.\s*)?(COUNT|SUM|MIN|MAX|AVG)\s*\(", re.IGNORECASE)
+    statement = "".join(aggregate_call.sub(lambda match: "pg_catalog." + match.group(1).lower() + "(", text)
+                        if kind == "code" else text for kind, text in _regions(statement))
+    normalized = " ".join(text if kind == "code" else "__quoted_identifier__"
+                          if kind == "quoted" and text.startswith('"') else " "
+                          for kind, text in _regions(statement))
+    for match in calls.finditer(normalized):
+        prefix, name = match.groups()
+        if name.upper() in aggregates and re.sub(r"\s+", "", prefix).lower() != "pg_catalog.":
+            raise sqlite3.ProgrammingError("집계 함수는 내장 함수로 확인할 수 있어야 합니다.")
     return _bind_query(statement, parameters is not None), parameters
 
 

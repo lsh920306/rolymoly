@@ -77,6 +77,19 @@ class MemberRecordsTests(unittest.TestCase):
         self.assertEqual(recent["games"], records["games"][:1])
         self.assertEqual((recent["game_count"], recent["wins"], recent["losses"]), (2, 1, 1))
         self.assertEqual(recent["tournaments"], records["tournaments"])
+        first = member_records(self.core, self.ids[0], tournament_limit=1)
+        self.assertEqual(first["tournament_count"], 2)
+        self.assertEqual(first["tournaments"][0]["id"], auction_id)
+        second = member_records(self.core, self.ids[0], tournament_limit=1,
+                                tournament_before_id=first["next_tournament_before_id"])
+        self.assertEqual(second["tournament_count"], 2)
+        self.assertEqual(second["tournaments"][0]["id"], normal_id)
+        self.assertIsNone(second["next_tournament_before_id"])
+        all_games = self.core.list_games()
+        first_games = self.core.list_games(limit=1)
+        older_games = self.core.list_games(limit=1, before_id=first_games[-1]["id"])
+        self.assertEqual(first_games + older_games, all_games)
+        self.assertEqual(len(self.core.list_games(kind="NORMAL", limit=1)), 1)
 
     def test_corrected_and_void_games_replace_previous_win_loss_totals(self):
         game_id = self.normal()

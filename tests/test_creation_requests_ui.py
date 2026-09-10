@@ -205,6 +205,38 @@ class CreationRequestUITests(unittest.TestCase):
         tables = [table.value for table in self.app.dataframe if "경기 직전 점수" in table.value.columns]
         self.assertEqual(len(tables), 1)
         self.assertIn("골드 2 · 0 LP", list(tables[0]["당시 현재 티어"]))
+        # A bounded synthetic page exercises navigation without creating 51
+        # competitions. The actual database cursor contract is tested separately.
+        import csv
+        import io
+        seed = next(row for row in self.core.list_games(kind="NORMAL") if row["id"] == gid)
+        archive = [dict(seed, id=1000 - index) for index in range(51)]
+        def page_rows(_core, kind=None, *, limit=None, before_id=None):
+            self.assertEqual(kind, "NORMAL")
+            rows = [row for row in archive if before_id is None or row["id"] < before_id]
+            return rows if limit is None else rows[:limit]
+        with patch.object(Core, "list_games", autospec=True, side_effect=page_rows) as query, \
+             patch.object(Competition, "game_labels", return_value={}) as names, \
+             patch("streamlit.download_button", side_effect=register_download):
+            self.app.run()
+            self.healthy()
+            frame = next(table.value for table in self.app.dataframe if "경기 번호" in table.value.columns)
+            self.assertEqual(frame["경기 번호"].tolist(), list(range(1000, 950, -1)))
+            self.assertEqual(query.call_args.kwargs, {"kind": "NORMAL", "limit": 51, "before_id": None})
+            self.assertEqual(names.call_args.args[0], list(range(1000, 950, -1)))
+            self.widget("button", "이전 경기").click().run()
+            self.healthy()
+            frame = next(table.value for table in self.app.dataframe if "경기 번호" in table.value.columns)
+            self.assertEqual(frame["경기 번호"].tolist(), [950])
+            self.assertTrue(self.widget("button", "이전 경기").disabled)
+            self.assertIsNone(self.widget("selectbox", "상세 기록을 볼 경기").value)
+            all_csv = downloads["rolymoly_normal_game_history.csv"]()
+            exported = list(csv.DictReader(io.StringIO(all_csv.decode("utf-8-sig"))))
+            self.assertEqual([int(row["경기 번호"]) for row in exported], list(range(1000, 949, -1)))
+            self.assertEqual(query.call_args.kwargs, {"kind": "NORMAL"})
+            self.widget("button", "최근 경기").click().run()
+            self.healthy()
+            self.assertEqual(query.call_args.kwargs["before_id"], None)
 
 
 if __name__ == "__main__":

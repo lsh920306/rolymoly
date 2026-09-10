@@ -74,10 +74,13 @@ class LazyPageTests(unittest.TestCase):
         app = self.app("admin")
         app.session_state.admin_active_tab = "점수 정책"
         with patch.object(Core, "policy_history", side_effect=AssertionError("closed policy history")), \
+             patch.object(Core, "list_members", side_effect=AssertionError("policy tab must use counts")), \
+             patch.object(Core, "member_status_counts", autospec=True, side_effect=Core.member_status_counts) as counts, \
              patch.object(Core, "policy", autospec=True, side_effect=Core.policy) as policy:
             app.run()
             self.clean(app)
             policy.assert_called_once()
+            counts.assert_called_once()
         app.session_state.admin_policy_history = True
         with patch.object(Core, "policy_history", return_value=[]) as query:
             app.run()
@@ -98,10 +101,16 @@ class LazyPageTests(unittest.TestCase):
 
     def test_member_csv_table_is_not_built_during_page_render(self):
         app = self.app("members")
+        from roly.riot_profile import member_profiles
         with patch("roly.ui.member_table", side_effect=AssertionError("eager export table")), \
-             patch.object(Core, "csv_bytes", side_effect=AssertionError("eager CSV")):
+             patch.object(Core, "csv_bytes", side_effect=AssertionError("eager CSV")), \
+             patch("roly.riot_profile.member_profiles", wraps=member_profiles) as profiles:
             app.run()
             self.clean(app)
+            self.assertEqual(profiles.call_args.args[1], [self.mid])
+            next(widget for widget in app.text_input if widget.label == "클랜원 검색").set_value("no-such-member").run()
+            self.clean(app)
+            self.assertEqual(profiles.call_args.args[1], [])
         self.assertTrue(app.get("download_button"))
 
     def test_deferred_export_runs_factory_once_per_request_and_checks_revocation(self):

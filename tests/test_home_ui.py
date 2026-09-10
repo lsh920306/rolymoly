@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from streamlit.testing.v1 import AppTest
 
@@ -217,7 +217,13 @@ class HomeUITests(unittest.TestCase):
         lounge = Lounge(self.core)
         lounge.update_profile(self.token, name="테스트 클랜", description="함께할 클랜원을 모집합니다.",
                               founded_on="2025-04-03", capacity=60, contact_url="https://example.com/clan")
-        self.at.run()
+        with patch.object(Core, "session", autospec=True, side_effect=Core.session) as auth, \
+             patch.object(Lounge, "profile", autospec=True, side_effect=Lounge.profile) as profile, \
+             patch.object(Core, "list_members", autospec=True, side_effect=Core.list_members) as members_read:
+            self.at.run()
+            auth.assert_called_once()
+            profile.assert_called_once()
+            members_read.assert_called_once()
         self.assert_clean()
         self.assertIn("테스트 클랜", [item.value for item in self.at.subheader])
         self.assertIn(f"{len(self.core.list_members())} / 60명", [item.value for item in self.at.text])
@@ -242,6 +248,30 @@ class HomeUITests(unittest.TestCase):
         self.assertEqual(self.at.query_params.get("member"), [str(member["id"])])
         self.assertTrue(any(item.value == "주력 챔피언" for item in self.at.subheader))
         self.assertTrue(any("전력점수" in item.value for item in [*self.at.caption, *self.at.markdown]))
+        # Only the matching full-run scope may provide an actor. Fragment-like
+        # calls after its reset, or a changed token/database, read afresh.
+        from roly.ui import _page_scope, context
+        core = Mock(db_path="synthetic-scope")
+        actor = {"id": 7, "role": "admin"}
+        class State(dict):
+            __getattr__ = dict.__getitem__
+        state = State(db_path=core.db_path, token="synthetic-token")
+        with patch("roly.ui.st.session_state", state), patch("roly.ui.services", return_value=(core, None)):
+            saved = _page_scope.set({"context": (core, None, state["token"], actor), "profile": {}})
+            try:
+                self.assertIs(context()[3], actor)
+                core.session.assert_not_called()
+                state["token"] = "changed-token"
+                core.session.return_value = None
+                self.assertIsNone(context()[3])
+                core.session.assert_called_once_with("changed-token")
+                state.update(db_path="changed-database", token="synthetic-token")
+                self.assertIsNone(context()[3])
+            finally:
+                _page_scope.reset(saved)
+            state["db_path"] = core.db_path
+            self.assertIsNone(context()[3])
+            self.assertEqual(core.session.call_count, 3)
 
     def test_profile_save_survives_navigation(self):
         from roly.lounge import Lounge
