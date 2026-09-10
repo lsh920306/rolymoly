@@ -352,6 +352,9 @@ if accounts_tab.open:
                     st.session_state.pop("admin_reset_receipt", None)
                     st.rerun()
 
+        from roly.db_probe_ui import render_db_probe
+        render_db_probe(core, token)
+
 if audit_tab.open:
     with audit_tab:
         st.subheader("변경 기록")
