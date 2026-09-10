@@ -327,23 +327,46 @@ def sale_correction_control(event, state, token, actor, *, from_live=False):
 
 @st.dialog("전체 경매 현황", width="large", on_dismiss=close_team_overview)
 def team_overview(event_id):
-    refresh_team_overview(event_id)
+    from roly.auction_http import transport_config
+    direct = transport_config(st.session_state.db_path, st.session_state.get("token"), event_id)
+    if direct:
+        # The mounted live panel already owns reconnecting HTTP/WS delivery.
+        # Opening a dialog must not create another per-viewer DB polling loop.
+        refresh_team_overview(event_id, direct=direct)
+    else:
+        _poll_team_overview(event_id)
 
 
 @st.fragment(run_every=1)
-def refresh_team_overview(event_id):
+def _poll_team_overview(event_id):
+    """Legacy/local transport has no companion Push source."""
+    refresh_team_overview(event_id)
+
+
+def _display_view(live, token, event_id):
+    if live.core.is_postgres:
+        from roly.auction_state import shared_view
+        return shared_view(live, token, event_id)
+    return live.get_view(token, event_id)
+
+
+def refresh_team_overview(event_id, *, direct=None):
     if st.session_state.get("live_overview_event") != event_id:
         return
     try:
-        actor, state = live_service(st.session_state.db_path).get_view(st.session_state.get("token"), event_id)
+        actor, state = _display_view(live_service(st.session_state.db_path), st.session_state.get("token"), event_id)
     except sqlite3.Error:
         st.caption("팀 현황을 잠시 불러올 수 없습니다. 연결이 회복되면 다시 표시합니다.")
+        return
+    if direct and not actor:
+        st.caption("로그인 상태를 확인한 뒤 경매 화면을 다시 열어 주세요.")
         return
     if not state:
         st.caption("경매 정보를 확인할 수 없습니다.")
         return
     render_overview(state, key=f"team_overview_{event_id}", member_id=actor.get("member_id") if actor else None,
-                    live_context=context_id(st.session_state.db_path, st.session_state.get("token"), event_id))
+                    live_context=context_id(st.session_state.db_path, st.session_state.get("token"), event_id) if direct else None,
+                    live_epoch=direct.get("epoch") if direct else None)
 
 
 @st.fragment(run_every=1)
@@ -490,7 +513,7 @@ def _render_live_auction(event_id, *, page_route=False):
     on_event = lambda: _on_live_event(live, token, event_id, component_key, context)
     view_started_at = monotonic()
     try:
-        actor, state = live.get_view(token, event_id)
+        actor, state = _display_view(live, token, event_id)
         view_received_at = monotonic()
     except sqlite3.Error:
         st.error("경매 상태를 불러오지 못했습니다. 연결이 회복되면 다시 확인합니다.")

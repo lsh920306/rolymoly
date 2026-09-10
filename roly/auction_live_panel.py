@@ -265,7 +265,7 @@ export function createLiveChannel({context, now, uuid, emit, readPending, writeP
 DIAGNOSTICS_JS = r"""
 // Bounded, secret-free DOM evidence. Timestamps mark DOM/ACK processing, not
 // painted pixels. Rows serialize once, after the input/ACK handler returns.
-export function createAuctionDiagnostics({now,timeOrigin=()=>null,visible=()=>true,
+export function createAuctionDiagnostics({now,timeOrigin=()=>null,visible=()=>true,serverEpoch=()=>'',eventId=()=>null,
   schedule=callback=>Promise.resolve().then(callback),limit=256,ttlMs=300000}) {
   limit=integer(limit)?Math.max(1,Math.min(256,limit)):256;
   ttlMs=finite(ttlMs)?Math.max(1000,Math.min(300000,ttlMs)):300000;
@@ -277,6 +277,9 @@ export function createAuctionDiagnostics({now,timeOrigin=()=>null,visible=()=>tr
     Object.assign(container.dataset,{schemaVersion:'1',clock:'performance.now',observation:'dom-not-paint',
       timeOriginMs:finite(timeOrigin())?String(timeOrigin()):'',limit:String(limit),ttlMs:String(ttlMs),
       lastSequence:String(sequence),retained:String(rows.length),dropped:String(dropped),expired:String(expired)});
+    const epoch=serverEpoch(),event=eventId();
+    container.dataset.serverEpoch=typeof epoch==='string' && /^[A-Za-z0-9_-]{1,64}$/.test(epoch)?epoch:'';
+    container.dataset.eventId=integer(event) && event>0?String(event):'';
   }
   function expire(force=false) {
     if(dead || (!force && now()<nextExpiry))return;
@@ -330,7 +333,37 @@ export function createAuctionDiagnostics({now,timeOrigin=()=>null,visible=()=>tr
 """
 
 PANEL_JS = r"""
-export default function renderLivePanel({parentElement,data,setTriggerValue,httpFrame=false,pushFrame=false}) {
+// Public companion cards are merged per key; authentication stays in delivery.
+// A tombstone cannot be resurrected by a partial or an older generation frame.
+export function publishAuctionViews(view,context,{epoch='',revision=null,views,connection,reset=false,complete=false}={}) {
+  if(typeof view.CustomEvent!=='function' || typeof view.dispatchEvent!=='function')return;
+  const cache=view._rolyAuctionViews ||=new Map(),meta=view._rolyAuctionViewMeta ||=new Map();
+  const previous=meta.get(context);
+  if(!reset && previous && previous.epoch!==epoch)return;
+  if(!reset && integer(revision) && integer(previous?.revision) && revision<previous.revision)return;
+  if(!cache.has(context))cache.set(context,null);
+  if(reset){cache.set(context,null);meta.set(context,{epoch,revision:null,connection:'connecting'});}
+  const current=meta.get(context) || {epoch,revision:null,connection:'connecting'};
+  let delta=views;
+  if(views!==undefined){
+    if(views===null)cache.set(context,null);
+    else if(typeof views==='object' && !Array.isArray(views)){
+      const full=complete || (Object.hasOwn(views,'teams') && Object.hasOwn(views,'event_status'));
+      if(cache.get(context)===null && !full)return;
+      const merged={...(full?{}:cache.get(context))};delta={};
+      for(const key of ['event_status','queue','remaining','teams','overview','history','sound'])if(Object.hasOwn(views,key)){
+        delta[key]=views[key];if(views[key]===null)delete merged[key];else merged[key]=views[key];
+      }
+      cache.delete(context);cache.set(context,merged);
+    }else return;
+  }
+  const state={...current,epoch,...(integer(revision)?{revision}:{}),...(connection?{connection}:{})};
+  meta.set(context,state);
+  while(cache.size>8){const key=cache.keys().next().value;cache.delete(key);meta.delete(key);}
+  view.dispatchEvent(new view.CustomEvent('roly-auction-frame',{detail:{context,epoch,revision:state.revision,
+    ...(reset?{views:null}:delta!==undefined?{views:delta}:{}),connection:state.connection}}));
+}
+export default function renderLivePanel({parentElement,data,setTriggerValue,httpFrame=false,pushFrame=false,snapshotFrame=false}) {
   const root=parentElement.querySelector('.live-panel');
   if(!root) return;
   const doc=root.ownerDocument;
@@ -342,19 +375,26 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
   old?.dispose?.();
   const sameServer=!data.direct || !old?.direct || old.direct.epoch===data.direct.epoch;
   const memory=old && old.context===context && sameServer ? old : {context,draft:0,draftLot:null,edited:false,stage:null,control:null};
-  if(old && old!==memory){old.mounted=false;old.delivery?.dispose?.();old.diagnostics?.dispose();}
+  if(old && old!==memory){old.mounted=false;old.delivery?.dispose?.();old.diagnostics?.dispose();
+    publishAuctionViews(view,old.context,{epoch:old.direct?.epoch || '',views:null,connection:'stopped'});}
   parentElement._rolyLivePanel=memory;
   if(!httpFrame)memory.frameworkGeneration=(memory.frameworkGeneration || 0)+1;
   const frameworkGeneration=memory.frameworkGeneration;
   memory.mounted=true;
   if(!httpFrame)memory.diagnosticsEnabled=data.diagnostics!==false;
   if(memory.diagnosticsEnabled && !memory.diagnostics)memory.diagnostics=createAuctionDiagnostics({now,
-    timeOrigin:()=>view.performance.timeOrigin,visible:()=>doc.visibilityState!=='hidden'});
+    timeOrigin:()=>view.performance.timeOrigin,visible:()=>doc.visibilityState!=='hidden',
+    serverEpoch:()=>memory.direct?.epoch || data.direct?.epoch || '',
+    eventId:()=>memory.direct?.event_id ?? memory.stage?.event_id ?? data.stage?.event_id});
   if(!memory.diagnosticsEnabled && memory.diagnostics){memory.diagnostics.dispose();memory.diagnostics=null;}
   memory.diagnostics?.mount(root);
   memory.observe=(type,value,at)=>{try{memory.diagnostics?.record(type,value,at);}catch(_){}};
   const uuid=()=>view.crypto.randomUUID();
   memory.direct=data.direct || memory.direct || null;
+  if(memory.direct && !memory.companionInitialized){
+    memory.companionInitialized=true;
+    publishAuctionViews(view,context,{epoch:memory.direct.epoch,reset:true});
+  }
   memory.trigger=setTriggerValue;
   memory.emit=(name,request)=>{
     if(memory.delivery)memory.delivery.send(request,{restored:!memory.channel.commandTiming});
@@ -387,12 +427,14 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
       },
       onFrame:(panel,source)=>{
         if(!active())return;
-        renderLivePanel({parentElement,data:{...panel,direct:memory.direct},setTriggerValue:memory.trigger,httpFrame:true,pushFrame:Boolean(source?.push)});
+        renderLivePanel({parentElement,data:{...panel,direct:memory.direct},setTriggerValue:memory.trigger,httpFrame:true,
+          pushFrame:Boolean(source?.push),snapshotFrame:Boolean(source?.snapshot) || !source?.push});
       },
       onError:(message,reload)=>{
         if(!active())return;
         memory.connectionMessage=message;
-        if(reload)memory.stateAvailable=false;
+        if(reload){memory.stateAvailable=false;
+          publishAuctionViews(view,context,{epoch:memory.direct.epoch,views:null,connection:'stopped'});}
         memory.refresh?.();
       }});
   }
@@ -404,14 +446,12 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
   if(httpFrame && incoming.fresh) {
     memory.httpReceived=true;memory.connectionMessage='';
     if(Object.hasOwn(data,'views') && typeof view.CustomEvent==='function') {
-      const views=view._rolyAuctionViews ||=new Map();
-      // A null entry removes all old companion data and marks an unavailable
-      // event, so a later slow framework repaint cannot resurrect old cards.
-      views.delete(context);views.set(context,data.views);
-      while(views.size>8)views.delete(views.keys().next().value);
-      view.dispatchEvent(new view.CustomEvent('roly-auction-frame',{detail:{context,views:data.views}}));
+      publishAuctionViews(view,context,{epoch:memory.direct?.epoch || '',revision:data.transport?.revision,
+        views:data.views,connection:data.available?'live':'unavailable',complete:snapshotFrame});
     }
-    const signature=JSON.stringify([data.status,data.lot?.id,data.lot?.status,data.control?.can_bid,data.views?.event_status]);
+    if(data.views===null)memory.eventStatus=null;
+    else if(data.views && Object.hasOwn(data.views,'event_status'))memory.eventStatus=data.views.event_status;
+    const signature=JSON.stringify([data.status,data.lot?.id,data.lot?.status,data.control?.can_bid,memory.eventStatus]);
     if(memory.chromeSignature!==undefined && memory.chromeSignature!==signature) {
       // Native host controls only rerun for phase/authority changes. Neither
       // an ordinary bid ACK nor a spectator poll waits for that rerun.
@@ -498,16 +538,25 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
       (memory.lot?.highest_bid===null || memory.lot?.highest_bid===undefined || memory.draft>memory.lot.highest_bid);
   }
   function refresh() {
+    const set=(target,key,value)=>{if(target[key]!==value)target[key]=value;};
     const control=memory.control;
     const editing=allowEdit();
-    nodes.metrics.hidden=!control;nodes.increments.hidden=!control;nodes.submit.hidden=!control;
-    nodes.balanceLabel.textContent='내 포인트'+(control?.team_name ? ' · '+control.team_name : '');
-    nodes.points.textContent=Number(control?.remaining || 0).toLocaleString('ko-KR')+' P';
-    nodes.input.disabled=!editing;
-    for(const button of nodes.buttons) button.disabled=!editing;
-    nodes.reset.disabled=!editing;
-    nodes.submit.disabled=!editing || !validAmount();
-    nodes.submit.textContent=live.pending ? '입찰 확인 중…' : (integer(memory.draft) ? memory.draft.toLocaleString('ko-KR')+' P 입찰하기' : '입찰하기');
+    if(memory.direct){
+      const connection=memory.delivery?.stopped()?'stopped':!memory.stateAvailable?'unavailable':
+        live.stale() || memory.connectionMessage?'stale':'live';
+      if(connection!==memory.companionConnection){
+        memory.companionConnection=connection;
+        publishAuctionViews(view,context,{epoch:memory.direct.epoch,connection});
+      }
+    }
+    for(const node of [nodes.metrics,nodes.increments,nodes.submit])set(node,'hidden',!control);
+    set(nodes.balanceLabel,'textContent','내 포인트'+(control?.team_name ? ' · '+control.team_name : ''));
+    set(nodes.points,'textContent',Number(control?.remaining || 0).toLocaleString('ko-KR')+' P');
+    set(nodes.input,'disabled',!editing);
+    for(const button of nodes.buttons)set(button,'disabled',!editing);
+    set(nodes.reset,'disabled',!editing);
+    set(nodes.submit,'disabled',!editing || !validAmount());
+    set(nodes.submit,'textContent',live.pending ? '입찰 확인 중…' : (integer(memory.draft) ? memory.draft.toLocaleString('ko-KR')+' P 입찰하기' : '입찰하기'));
     let message=live.messageLot===memory.lot?.id ? live.message : '', kind=message ? live.messageStatus : '';
     if(memory.delivery?.stopped()) {message=memory.connectionMessage || '화면을 새로고침해 주세요.';kind='error';}
     else if(live.pending) {message='입찰 접수를 확인하고 있습니다.';kind='';}
@@ -519,30 +568,30 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     else if(!control) {message='이 경매의 팀장만 입찰할 수 있습니다.';kind='';}
     else if(!editing) {message='다음 선수 입찰을 기다려 주세요.';kind='';}
     else if(!validAmount()) {message=memory.draft>control.remaining ? '사용 가능한 포인트를 확인해 주세요.' : '현재 최고 입찰가보다 높은 포인트를 입력해 주세요.';kind='';}
-    nodes.feedback.textContent=message || '포인트를 선택한 뒤 입찰해 주세요.';
-    nodes.feedback.className='bid-feedback'+(kind ? ' '+kind : '');
-    root.dataset.pendingRequest=live.pending?.request_id || '';
-    root.dataset.pollSequence=String(live.sequence);
-    root.dataset.clockCalibrated=String(Boolean(live.bestClock));
-    root.dataset.clockStale=String(live.stale());
-    root.dataset.frameAgeMs=String(Math.max(0,now()-live.lastContact));
-    root.dataset.roundTripMs=String(live.metrics.round_trip_ms ?? '');
-    root.dataset.serverElapsedMs=String(live.metrics.server_elapsed_ms ?? '');
-    root.dataset.snapshotElapsedMs=String(live.metrics.snapshot_elapsed_ms ?? '');
-    root.dataset.callbackElapsedMs=String(live.metrics.callback_elapsed_ms ?? '');
-    root.dataset.viewElapsedMs=String(live.metrics.view_elapsed_ms ?? '');
-    root.dataset.serverNow=String(memory.serverNow ?? '');
-    root.dataset.clientDraftChangeMs=String(memory.draftChangeMs ?? '');
-    root.dataset.pollPending=String(Boolean(live.outstanding));
-    root.dataset.lastBidRequestId=live.lastCommandTiming?.request_id || '';
-    root.dataset.lastBidElapsedMs=String(live.lastCommandTiming?.elapsed_ms ?? '');
-    root.dataset.lastBidStatus=live.lastCommandTiming?.status || '';
-    root.dataset.lastBidAttempts=String(live.lastCommandTiming?.attempts ?? '');
-    root.dataset.lastBidServerElapsedMs=String(live.commandMetrics?.server_elapsed_ms ?? '');
-    root.dataset.lastBidCallbackElapsedMs=String(live.commandMetrics?.callback_elapsed_ms ?? '');
-    root.dataset.clientTimeOriginMs=String(view.performance.timeOrigin ?? '');
-    root.dataset.deliveryMode=memory.direct?(memory.deliveryMode || 'http'):'streamlit';
-    root.dataset.stateRevision=String(memory.revision ?? '');
+    set(nodes.feedback,'textContent',message || '포인트를 선택한 뒤 입찰해 주세요.');
+    set(nodes.feedback,'className','bid-feedback'+(kind ? ' '+kind : ''));
+    set(root.dataset,'pendingRequest',live.pending?.request_id || '');
+    set(root.dataset,'pollSequence',String(live.sequence));
+    set(root.dataset,'clockCalibrated',String(Boolean(live.bestClock)));
+    set(root.dataset,'clockStale',String(live.stale()));
+    set(root.dataset,'frameAgeMs',String(Math.max(0,now()-live.lastContact)));
+    set(root.dataset,'roundTripMs',String(live.metrics.round_trip_ms ?? ''));
+    set(root.dataset,'serverElapsedMs',String(live.metrics.server_elapsed_ms ?? ''));
+    set(root.dataset,'snapshotElapsedMs',String(live.metrics.snapshot_elapsed_ms ?? ''));
+    set(root.dataset,'callbackElapsedMs',String(live.metrics.callback_elapsed_ms ?? ''));
+    set(root.dataset,'viewElapsedMs',String(live.metrics.view_elapsed_ms ?? ''));
+    set(root.dataset,'serverNow',String(memory.serverNow ?? ''));
+    set(root.dataset,'clientDraftChangeMs',String(memory.draftChangeMs ?? ''));
+    set(root.dataset,'pollPending',String(Boolean(live.outstanding)));
+    set(root.dataset,'lastBidRequestId',live.lastCommandTiming?.request_id || '');
+    set(root.dataset,'lastBidElapsedMs',String(live.lastCommandTiming?.elapsed_ms ?? ''));
+    set(root.dataset,'lastBidStatus',live.lastCommandTiming?.status || '');
+    set(root.dataset,'lastBidAttempts',String(live.lastCommandTiming?.attempts ?? ''));
+    set(root.dataset,'lastBidServerElapsedMs',String(live.commandMetrics?.server_elapsed_ms ?? ''));
+    set(root.dataset,'lastBidCallbackElapsedMs',String(live.commandMetrics?.callback_elapsed_ms ?? ''));
+    set(root.dataset,'clientTimeOriginMs',String(view.performance.timeOrigin ?? ''));
+    set(root.dataset,'deliveryMode',memory.direct?(memory.deliveryMode || 'http'):'streamlit');
+    set(root.dataset,'stateRevision',String(memory.revision ?? ''));
     // Only transitions add rows. Tick updates the clock but never serializes
     // the diagnostic buffer or repeats an ACK/pending observation.
     const pending=live.pending;
@@ -618,7 +667,8 @@ export default function renderLivePanel({parentElement,data,setTriggerValue,http
     memory.mounted=false;memory.dispose?.();
     // Framework cleanup also runs immediately before a synchronous rerender.
     // Release the transport only if no replacement mounted in this microtask.
-    Promise.resolve().then(()=>{if(!memory.mounted){memory.delivery?.dispose?.();memory.delivery=null;memory.diagnostics?.dispose();memory.diagnostics=null;}});
+    Promise.resolve().then(()=>{if(!memory.mounted){memory.delivery?.dispose?.();memory.delivery=null;memory.diagnostics?.dispose();memory.diagnostics=null;
+      if(memory.direct)publishAuctionViews(view,context,{epoch:memory.direct.epoch,views:null,connection:'stopped'});}});
   };
 }
 """

@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent
 BACKEND_FILES = ("core.py", "auth.py", "competition.py", "tournament.py", "live_auction.py",
                  "postgres.py", "member_profile.py", "member_ranks.py", "riot_profile.py",
                  "riot_sync.py", "riot_api.py", "result_revision.py", "lounge.py",
+                 "auction_state.py", "auction_shared.py", "auction_push.py",
                  "storage_config.py", "deployment_config.py", "service_resources.py")
 HANDOVER_ERROR = "서비스 업데이트를 마무리하고 있습니다. 잠시 후 다시 시도해 주세요."
 

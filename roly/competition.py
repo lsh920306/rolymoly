@@ -477,18 +477,39 @@ class Competition:
         return dict(row)
 
     def _assign(self, conn, event_id, member_id, team_id, amount):
+        team = self._team(conn, event_id, team_id)
+        player = self._player(conn, event_id, member_id)
+        count, spent = conn.execute("SELECT COUNT(*),COALESCE(SUM(price),0) FROM competition_players WHERE team_id=? AND member_id<>?", (team_id, member_id)).fetchone()
+        statements = self._assignment_statements(team, player, amount, count, spent)
+        batch = getattr(conn, "execute_batch", None)
+        if callable(batch):
+            batch(statements)
+        else:
+            for query, parameters in statements:
+                conn.execute(query, parameters)
+
+    @staticmethod
+    def _assignment_statements(team, player, amount, count, spent):
+        """Validate rows read under the caller's writer lock, without re-reading.
+
+        Both ordinary assignment and live settlement keep the same rules. The
+        caller must supply the destination totals excluding this player, which
+        also preserves reassignment to a player's existing team.
+        """
         if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
             raise ValueError("낙찰가는 0 이상의 정수로 입력해 주세요.")
-        team = self._team(conn, event_id, team_id)
-        if self._player(conn, event_id, member_id)["participation_status"] != "SELECTED":
+        if player["participation_status"] != "SELECTED":
             raise ValueError("대회 명단에서 제외된 선수는 배정할 수 없습니다.")
-        count, spent = conn.execute("SELECT COUNT(*),COALESCE(SUM(price),0) FROM competition_players WHERE team_id=? AND member_id<>?", (team_id, member_id)).fetchone()
+        if team["event_id"] != player["event_id"]:
+            raise ValueError("해당 대회의 팀을 선택해 주세요.")
         if count >= 5:
             raise ValueError("팀 정원 5명을 초과할 수 없습니다.")
         if amount > team["budget"] - spent:
             raise ValueError("팀의 남은 예산을 초과했습니다.")
-        conn.execute("UPDATE competition_players SET team_id=?,price=?,state='ASSIGNED' WHERE event_id=? AND member_id=?", (team_id, amount, event_id, member_id))
-        conn.execute("UPDATE competition_events SET current_player_id=NULL WHERE id=? AND current_player_id=?", (event_id, member_id))
+        return [
+            ("UPDATE competition_players SET team_id=?,price=?,state='ASSIGNED' WHERE event_id=? AND member_id=?", (team["id"], amount, player["event_id"], player["member_id"])),
+            ("UPDATE competition_events SET current_player_id=NULL WHERE id=? AND current_player_id=?", (player["event_id"], player["member_id"])),
+        ]
 
     def bid(self, token, event_id, member_id, team_id, amount):
         with self.service.transaction() as conn:

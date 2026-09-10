@@ -18,7 +18,8 @@ from .core import SESSION_SELECT, now
 _VERSION_DDL = """CREATE TABLE IF NOT EXISTS _auction_versions(
     event_id BIGINT PRIMARY KEY CHECK(event_id>=0),
     revision BIGINT NOT NULL DEFAULT 0 CHECK(revision>=0),
-    detail_revision BIGINT NOT NULL DEFAULT 0 CHECK(detail_revision>=0))"""
+    detail_revision BIGINT NOT NULL DEFAULT 0 CHECK(detail_revision>=0),
+    display_revision BIGINT NOT NULL DEFAULT 0 CHECK(display_revision>=0))"""
 
 # The zero row invalidates identity/profile data across all watched auctions.
 # Event rows deliberately have no foreign key: deleting/recreating a session or
@@ -42,10 +43,12 @@ _GLOBAL_TABLES = {
     "riot_profiles": True,
 }
 _LOT_DETAILS = ("id", "event_id", "member_id", "sequence", "attempt", "status", "opened_at", "closed_at")
-_VERSION_SELECT = """SELECT g.revision+COALESCE(e.revision,0) AS revision,
-    g.detail_revision+COALESCE(e.detail_revision,0) AS detail_revision
-    FROM _auction_versions g LEFT JOIN _auction_versions e ON e.event_id=?
-    WHERE g.event_id=0"""
+_PLAYER_DISPLAY = ("event_id", "member_id", "riot_id", "role", "score", "participation_status",
+                   "clan_tier_snapshot", "current_tier_snapshot", "current_tier_lp_snapshot")
+_PROFILE_TABLES = {"members": "id", "member_ranks": "member_id", "riot_profiles": "member_id"}
+# SELECT * deliberately works against v8 during a rolling migration. Missing
+# display_revision disables detail reuse; no failed SQL or stale fallback.
+_VERSION_SELECT = "SELECT * FROM _auction_versions WHERE event_id IN (0,?) ORDER BY event_id"
 
 
 def notification_channel(schema):
@@ -53,11 +56,12 @@ def notification_channel(schema):
     return "roly_auction_" + hashlib.md5(str(schema).encode(), usedforsecurity=False).hexdigest()[:24]
 
 
-def _bump_sql(event, detail):
-    return f"""INSERT INTO _auction_versions(event_id,revision,detail_revision)
-        VALUES({event},1,{detail}) ON CONFLICT(event_id) DO UPDATE SET
+def _bump_sql(event, detail, display="0"):
+    return f"""INSERT INTO _auction_versions(event_id,revision,detail_revision,display_revision)
+        VALUES({event},1,{detail},{display}) ON CONFLICT(event_id) DO UPDATE SET
         revision=_auction_versions.revision+1,
-        detail_revision=_auction_versions.detail_revision+excluded.detail_revision;"""
+        detail_revision=_auction_versions.detail_revision+excluded.detail_revision,
+        display_revision=_auction_versions.display_revision+excluded.display_revision;"""
 
 
 def initialize_changes(db, *, postgres=False):
@@ -65,6 +69,12 @@ def initialize_changes(db, *, postgres=False):
     if not db.in_transaction:
         raise ValueError("Auction change tracking requires an existing transaction.")
     db.execute(_VERSION_DDL)
+    if postgres:
+        db.execute("""ALTER TABLE _auction_versions ADD COLUMN IF NOT EXISTS
+            display_revision BIGINT NOT NULL DEFAULT 0 CHECK(display_revision>=0)""")
+    elif "display_revision" not in {row[1] for row in db.execute("PRAGMA table_info(_auction_versions)")}:
+        db.execute("""ALTER TABLE _auction_versions ADD COLUMN
+            display_revision BIGINT NOT NULL DEFAULT 0 CHECK(display_revision>=0)""")
     db.execute("INSERT INTO _auction_versions(event_id,revision,detail_revision) VALUES(0,0,0) ON CONFLICT(event_id) DO NOTHING")
     if postgres:
         _initialize_postgres(db)
@@ -77,24 +87,41 @@ def _initialize_sqlite(db):
         for operation in ("INSERT", "UPDATE", "DELETE"):
             source = "OLD" if operation == "DELETE" else "NEW"
             detail = str(int(detailed))
+            display = "0"
+            if table == "competition_players":
+                display = "1" if operation != "UPDATE" else "CASE WHEN " + " OR ".join(
+                    f"NEW.{name} IS NOT OLD.{name}" for name in _PLAYER_DISPLAY) + " THEN 1 ELSE 0 END"
             if table == "live_lots":
                 detail = "1" if operation != "UPDATE" else "CASE WHEN " + " OR ".join(
                     f"NEW.{name} IS NOT OLD.{name}" for name in _LOT_DETAILS) + " THEN 1 ELSE 0 END"
-            body = _bump_sql(f"{source}.{column}", detail)
+            body = _bump_sql(f"{source}.{column}", detail, display)
             if operation == "UPDATE":
                 # IDs normally never move, but raw admin/maintenance writes
                 # must invalidate both the old and new event if they do.
-                body += f"""INSERT INTO _auction_versions(event_id,revision,detail_revision)
-                    SELECT OLD.{column},1,1 WHERE OLD.{column} IS NOT NEW.{column}
+                body += f"""INSERT INTO _auction_versions(event_id,revision,detail_revision,display_revision)
+                    SELECT OLD.{column},1,1,1 WHERE OLD.{column} IS NOT NEW.{column}
                     ON CONFLICT(event_id) DO UPDATE SET
                     revision=_auction_versions.revision+1,
-                    detail_revision=_auction_versions.detail_revision+1;"""
-            db.execute(f"""CREATE TRIGGER IF NOT EXISTS auction_change_{table}_{operation.lower()}
+                    detail_revision=_auction_versions.detail_revision+1,
+                    display_revision=_auction_versions.display_revision+1;"""
+            db.execute(f"DROP TRIGGER IF EXISTS auction_change_{table}_{operation.lower()}")
+            db.execute(f"""CREATE TRIGGER auction_change_{table}_{operation.lower()}
                 AFTER {operation} ON {table} BEGIN {body} END""")
     for table, detailed in _GLOBAL_TABLES.items():
         for operation in ("INSERT", "UPDATE", "DELETE"):
-            db.execute(f"""CREATE TRIGGER IF NOT EXISTS auction_change_{table}_{operation.lower()}
-                AFTER {operation} ON {table} BEGIN {_bump_sql('0', str(int(detailed)))} END""")
+            body = _bump_sql('0', str(int(detailed)))
+            if table in _PROFILE_TABLES:
+                column = _PROFILE_TABLES[table]
+                keys = [f"{source}.{column}" for source in (("NEW",) if operation == "INSERT" else
+                        ("OLD",) if operation == "DELETE" else ("OLD", "NEW"))]
+                body += f"""INSERT INTO _auction_versions(event_id,revision,detail_revision,display_revision)
+                    SELECT DISTINCT event_id,1,1,1 FROM competition_players WHERE member_id IN ({','.join(keys)})
+                    ON CONFLICT(event_id) DO UPDATE SET revision=_auction_versions.revision+1,
+                    detail_revision=_auction_versions.detail_revision+1,
+                    display_revision=_auction_versions.display_revision+1;"""
+            db.execute(f"DROP TRIGGER IF EXISTS auction_change_{table}_{operation.lower()}")
+            db.execute(f"""CREATE TRIGGER auction_change_{table}_{operation.lower()}
+                AFTER {operation} ON {table} BEGIN {body} END""")
 
 
 def _initialize_postgres(db):
@@ -106,6 +133,7 @@ def _initialize_postgres(db):
             event_key bigint;
             old_key bigint;
             detail bigint := TG_ARGV[1]::bigint;
+            display bigint := 0;
             previous_row jsonb;
             current_row jsonb;
             channel text := 'roly_auction_' || substr(md5(TG_TABLE_SCHEMA),1,24);
@@ -122,24 +150,44 @@ def _initialize_postgres(db):
                     (current_row - ARRAY['highest_bid','highest_team_id','closes_at']) IS DISTINCT FROM
                     (previous_row - ARRAY['highest_bid','highest_team_id','closes_at']) THEN detail := 1; END IF;
             END IF;
-            INSERT INTO _auction_versions(event_id,revision,detail_revision)
-                VALUES(event_key,1,detail) ON CONFLICT(event_id) DO UPDATE SET
+            IF TG_TABLE_NAME = 'competition_players' THEN
+                IF TG_OP <> 'UPDATE' OR __PLAYER_DISPLAY_CHANGED__ THEN display := 1; END IF;
+            END IF;
+            INSERT INTO _auction_versions(event_id,revision,detail_revision,display_revision)
+                VALUES(event_key,1,detail,display) ON CONFLICT(event_id) DO UPDATE SET
                 revision=_auction_versions.revision+1,
-                detail_revision=_auction_versions.detail_revision+excluded.detail_revision;
+                detail_revision=_auction_versions.detail_revision+excluded.detail_revision,
+                display_revision=_auction_versions.display_revision+excluded.display_revision;
             PERFORM pg_catalog.pg_notify(channel,event_key::text);
             IF TG_OP = 'UPDATE' AND TG_ARGV[0] <> 'global' THEN
                 old_key := previous_row->>TG_ARGV[0];
                 IF old_key IS DISTINCT FROM event_key THEN
-                    INSERT INTO _auction_versions(event_id,revision,detail_revision)
-                        VALUES(old_key,1,1) ON CONFLICT(event_id) DO UPDATE SET
+                    INSERT INTO _auction_versions(event_id,revision,detail_revision,display_revision)
+                        VALUES(old_key,1,1,1) ON CONFLICT(event_id) DO UPDATE SET
                         revision=_auction_versions.revision+1,
-                        detail_revision=_auction_versions.detail_revision+1;
+                        detail_revision=_auction_versions.detail_revision+1,
+                        display_revision=_auction_versions.display_revision+1;
                     PERFORM pg_catalog.pg_notify(channel,old_key::text);
                 END IF;
             END IF;
+            IF TG_TABLE_NAME IN ('members','member_ranks','riot_profiles') THEN
+                IF TG_TABLE_NAME = 'members' THEN
+                    old_key := previous_row->>'id'; event_key := current_row->>'id';
+                ELSE
+                    old_key := previous_row->>'member_id'; event_key := current_row->>'member_id';
+                END IF;
+                INSERT INTO _auction_versions(event_id,revision,detail_revision,display_revision)
+                    SELECT DISTINCT p.event_id,1,1,1 FROM competition_players p
+                    WHERE p.member_id IN (old_key,event_key)
+                    ON CONFLICT(event_id) DO UPDATE SET revision=_auction_versions.revision+1,
+                    detail_revision=_auction_versions.detail_revision+1,
+                    display_revision=_auction_versions.display_revision+1;
+                -- The global notification already wakes every subscribed room.
+            END IF;
             RETURN NULL;
         END
-        $auction_change$""")
+        $auction_change$""".replace("__PLAYER_DISPLAY_CHANGED__", " OR ".join(
+            f"(current_row->'{name}') IS DISTINCT FROM (previous_row->'{name}')" for name in _PLAYER_DISPLAY)))
     for table, (column, detailed) in _EVENT_TABLES.items():
         db.execute(f"DROP TRIGGER IF EXISTS auction_change ON {table}")
         db.execute(f"""CREATE TRIGGER auction_change AFTER INSERT OR UPDATE OR DELETE ON {table}
@@ -178,8 +226,12 @@ def _batches(live, event_id, tokens, state_statements=()):
             batches = [db.execute(query, parameters or ()).fetchall() for query, parameters in statements]
             received = time.monotonic()
     sampled_clock = float(batches.pop()[0][0]) if db_clock else live._clock()
-    version = dict(batches.pop(0)[0])
-    version = {key: int(value) for key, value in version.items()}
+    version_rows = [dict(row) for row in batches.pop(0)]
+    if not any(row["event_id"] == 0 for row in version_rows):
+        raise ValueError("Auction global change version is missing.")
+    version = {key: sum(int(row[key]) for row in version_rows) for key in ("revision", "detail_revision")}
+    version["display_revision"] = (sum(int(row["display_revision"]) for row in version_rows)
+                                   if all("display_revision" in row for row in version_rows) else None)
     actors = {token: None for token in tokens}
     if actor_statement:
         for row in batches.pop(0):
@@ -201,6 +253,25 @@ def _hot_statements(live, event_id):
         (statements[2][0].replace("LIMIT 300", "LIMIT 30"), (event_id,)),
         (statements[3][0].replace("LIMIT 300", "LIMIT 30"), (event_id,)),
     ]
+
+
+def _allocation_statements(live, event_id):
+    """Refresh topology and money without fetching the unchanged Riot payload."""
+    statements = live._view_statements(event_id)[:-1]
+    return [(query.replace("LIMIT 300", "LIMIT 30"), parameters) for query, parameters in statements]
+
+
+def _allocation_state(live, event_id, base, batches, sample):
+    state = live._assemble_view(event_id, [*batches, []], sampled_clock=sample["server_now"], received=sample["sampled_at"])
+    if state is None:
+        return None
+    # Reuse only the same participant identity. Any snapshot score/tier/role or
+    # profile change advances display_revision and takes the full path instead.
+    profiles = {(p["member_id"], p["riot_id"]): p.get("riot_profile")
+                for p in [*base["lots"], *base["event"]["players"]]}
+    for player in [*state["lots"], *state["event"]["players"]]:
+        player["riot_profile"] = deepcopy(profiles.get((player["member_id"], player["riot_id"])))
+    return state
 
 
 def _hot_state(live, base, batches, sample):
@@ -250,7 +321,7 @@ def age_state(state, server_now, sampled_at):
     return state
 
 
-def _finish(sample, state, *, changed, details_changed):
+def _finish(sample, state, *, changed, details_changed, display_changed=False):
     # Session expiry uses the application's UTC clock throughout Core and the
     # bid validator. SQL's cutoff precedes pool waits and row conversion, so
     # check again immediately before publishing a completed read. Auction
@@ -259,10 +330,11 @@ def _finish(sample, state, *, changed, details_changed):
     for token, actor in sample["actors"].items():
         if actor is not None and actor["expires_at"] <= finished_at:
             sample["actors"][token] = None
-    return {**sample, "state": state, "changed": changed, "details_changed": details_changed}
+    return {**sample, "state": state, "changed": changed, "details_changed": details_changed,
+            "display_changed": display_changed}
 
 
-def read_snapshot(live, event_id, tokens=(), *, base_state=None, base_version=None):
+def read_snapshot(live, event_id, tokens=(), *, base_state=None, base_version=None, changed_hint=False):
     """Read one shared event plus all viewers' current, revocable identities.
 
     ``base_version`` is the preceding result (or a dict containing its two
@@ -270,19 +342,38 @@ def read_snapshot(live, event_id, tokens=(), *, base_state=None, base_version=No
     retains its cached state and may age a private copy with ``age_state``.
     A normal bid returns a complete compatible state reusing cached details.
     Every nonempty state, version and actor map comes from the same snapshot.
+    A change notification skips only the preliminary probe: the hot snapshot
+    still checks current identities and both versions before reusing details.
     """
     tokens = tuple(dict.fromkeys(tokens))
-    if base_state is not None and base_version is not None:
-        sample, _ = _batches(live, event_id, tokens)
-        if sample["revision"] == base_version["revision"]:
+    if base_state is not None and base_version is not None and base_version.get("display_revision") is not None:
+        sample, batches = _batches(live, event_id, tokens,
+                                   _hot_statements(live, event_id) if changed_hint else ())
+        if sample["display_revision"] is not None and sample["revision"] == base_version["revision"]:
             return _finish(sample, None, changed=False, details_changed=False)
-        if sample["detail_revision"] == base_version["detail_revision"]:
-            sample, batches = _batches(live, event_id, tokens, _hot_statements(live, event_id))
-            if sample["detail_revision"] == base_version["detail_revision"]:
+        if sample["display_revision"] is not None and sample["detail_revision"] == base_version["detail_revision"]:
+            if not changed_hint:
+                sample, batches = _batches(live, event_id, tokens, _hot_statements(live, event_id))
+            if sample["display_revision"] is not None and sample["detail_revision"] == base_version["detail_revision"]:
                 state = _hot_state(live, base_state, batches, sample)
                 return _finish(sample, state, changed=True, details_changed=False)
             # A profile/roster update committed between the probe and hot
             # snapshot. Discard those rows; the next full snapshot is atomic.
-    sample, batches = _batches(live, event_id, tokens, live._view_statements(event_id))
+        if sample["display_revision"] is not None and sample["display_revision"] == base_version["display_revision"]:
+            sample, batches = _batches(live, event_id, tokens, _allocation_statements(live, event_id))
+            if sample["display_revision"] == base_version["display_revision"]:
+                state = _allocation_state(live, event_id, base_state, batches, sample)
+                return _finish(sample, state, changed=True, details_changed=True)
+            # A display update raced the allocation fetch. Discard the rows.
+    statements = [(query.replace("LIMIT 300", "LIMIT 30"), parameters)
+                  for query, parameters in live._view_statements(event_id)]
+    sample, batches = _batches(live, event_id, tokens, statements)
     state = live._assemble_view(event_id, batches, sampled_clock=sample["server_now"], received=sample["sampled_at"])
-    return _finish(sample, state, changed=True, details_changed=True)
+    return _finish(sample, state, changed=True, details_changed=True, display_changed=True)
+
+
+def shared_view(live, token, event_id):
+    """Initial/rerun UI read with fresh authorization and shared event data."""
+    from .auction_shared import shared_snapshot
+    result = shared_snapshot(live, event_id, (token,))
+    return result["actors"].get(token), result["state"]

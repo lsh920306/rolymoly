@@ -15,6 +15,7 @@ from time import monotonic
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+import streamlit as st
 from anyio import CapacityLimiter, to_thread
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
@@ -29,6 +30,26 @@ EPOCH_HEADER = "X-Rolymoly-Server-Epoch"
 SESSION_HEADER = "X-Rolymoly-Session"
 _runtime = None
 _runtime_lock = threading.RLock()
+
+
+@st.cache_resource(show_spinner=False)
+def _runtime_registry():
+    # Streamlit evicts watched modules during a source update, while the ASGI
+    # lifespan still owns its original module and runtime. This stable resource
+    # bridges those imports; it never authenticates or creates a service.
+    return {"lock": threading.RLock(), "runtime": None}
+
+
+def get_runtime():
+    with _runtime_lock:
+        local = _runtime
+    if local is not None:
+        return local
+    registry = _runtime_registry()
+    with registry["lock"]:
+        return registry["runtime"]
+
+
 _logger = logging.getLogger(__name__)
 
 
@@ -56,6 +77,12 @@ class TransportDiagnostics:
 class TransportError(Exception):
     def __init__(self, code, message, status=400, *, reload=False):
         self.code, self.message, self.status, self.reload = code, message, status, reload
+
+
+# Old runtime methods and freshly imported endpoints must agree on the caught
+# exception type, especially when a stale epoch requires a browser reload.
+with _runtime_registry()["lock"]:
+    TransportError = _runtime_registry().setdefault("transport_error", TransportError)
 
 
 @dataclass
@@ -215,13 +242,12 @@ def transport_config(db_path, token, event_id):
     # Local/demo rendering must not read Secrets or activate a network service.
     if not str(db_path).startswith("supabase://") or not isinstance(token, str) or not token:
         return None
-    with _runtime_lock:
-        active = _runtime
-        if active is None or not active.active or active.db_path != str(db_path):
-            return None
-        return {"live_url": "/api/auction/live", "bid_url": "/api/auction/bid",
-                **({"ws_url": "/api/auction/ws"} if active.push is not None else {}), "epoch": active.epoch,
-                "storage_key": "roly-login-" + sha256(str(db_path).encode()).hexdigest()[:24], "event_id": event_id}
+    active = get_runtime()
+    if active is None or not active.active or active.db_path != str(db_path):
+        return None
+    return {"live_url": "/api/auction/live", "bid_url": "/api/auction/bid",
+            **({"ws_url": "/api/auction/ws"} if active.push is not None else {}), "epoch": active.epoch,
+            "storage_key": "roly-login-" + sha256(str(db_path).encode()).hexdigest()[:24], "event_id": event_id}
 
 
 def _response(value, status=200):
@@ -281,8 +307,7 @@ async def handle(request, *, bidding):
         # Keep transport secrets out of command ledgers, echoed envelopes and views.
         body.pop("session_token", None)
         body.pop("server_epoch", None)
-        with _runtime_lock:
-            runtime = _runtime
+        runtime = get_runtime()
         if runtime is None:
             raise TransportError("transport_unavailable", "입찰 연결을 준비하고 있습니다. 화면을 다시 열어 주세요.", 503, reload=True)
         runtime.check_epoch(server_epoch)
@@ -365,18 +390,26 @@ async def lifespan(app):
     if runtime is not None:
         from .auction_push import AuctionHub
         runtime.push = AuctionHub(runtime)
-    with _runtime_lock:
-        if _runtime is not None:
-            raise RuntimeError("Auction HTTP lifetime already active")
-        _runtime = runtime
+    registry = _runtime_registry()
+    with registry["lock"]:
+        with _runtime_lock:
+            if _runtime is not None or registry["runtime"] is not None:
+                raise RuntimeError("Auction HTTP lifetime already active")
+            _runtime = runtime
+            registry["runtime"] = runtime
     _logger.warning("Auction HTTP startup ready: enabled=%s", runtime is not None)
     try:
         yield
     finally:
-        if runtime is not None and runtime.push is not None:
-            await runtime.push.close()
-        with _runtime_lock:
-            if runtime is not None:
-                runtime.active = False
-            if _runtime is runtime:
-                _runtime = None
+        if runtime is not None:
+            runtime.active = False
+        try:
+            if runtime is not None and runtime.push is not None:
+                await runtime.push.close()
+        finally:
+            with registry["lock"]:
+                with _runtime_lock:
+                    if _runtime is runtime:
+                        _runtime = None
+                    if registry["runtime"] is runtime:
+                        registry["runtime"] = None

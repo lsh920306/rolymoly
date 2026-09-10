@@ -685,7 +685,7 @@ class LiveAuctionTests(unittest.TestCase):
         checked = threading.Event()
         release = threading.Event()
         rechecked = threading.Event()
-        original = self.live.has_active_sessions
+        original = self.live._due_candidates
 
         def delayed_check():
             if not checked.is_set():
@@ -698,7 +698,7 @@ class LiveAuctionTests(unittest.TestCase):
             rechecked.set()
             return result
 
-        with patch.object(self.live, "has_active_sessions", side_effect=delayed_check):
+        with patch.object(self.live, "_due_candidates", side_effect=delayed_check):
             worker = self.live.ensure_worker(interval=.01)
             try:
                 self.assertTrue(checked.wait(timeout=2))

@@ -138,6 +138,96 @@ class AuctionStateTests(unittest.TestCase):
         self.assertEqual(len(batches), 2)
         self.assertFalse(any("LIMIT 300" in query for batch in batches for query, _ in batch))
 
+    def test_notified_hot_snapshot_removes_one_batch_and_matches_probe_and_full_sql_state(self):
+        self.start(bid_seconds=30)
+        self.cache(self.pool[0])
+        batches = []
+        facade = SimpleNamespace(is_postgres=True, db_path=self.core.db_path,
+                                 connect=lambda: BatchedSQLite(self.core.connect(), batches))
+        live = LiveAuction(facade, self.comp)
+        tokens = (*self.tokens, *(f"viewer-{index}" for index in range(76)))
+        with patch("roly.auction_state.time.monotonic", return_value=1000.0):
+            previous = read_snapshot(live, self.event, tokens)
+            self.bid(0, 5)
+            batches.clear()
+            probed = read_snapshot(live, self.event, tokens, base_state=previous["state"], base_version=previous)
+            self.assertEqual([len(batch) for batch in batches], [3, 7])
+            batches.clear()
+            notified = read_snapshot(live, self.event, tokens, base_state=previous["state"],
+                                     base_version=previous, changed_hint=True)
+            self.assertEqual([len(batch) for batch in batches], [7])
+            self.assertEqual(sum("FROM sessions s" in query for query, _ in batches[0]), 1)
+            self.assertEqual(notified, probed)
+            full = read_snapshot(live, self.event, tokens)
+            self.assertEqual(notified["state"], full["state"])
+        self.assertEqual(len(notified["actors"]), 80)
+        self.assertFalse(notified["details_changed"])
+        self.assertEqual(notified["state"]["current_lot"]["highest_bid"], 5)
+        self.assertIsNone(previous["state"]["current_lot"]["highest_bid"])
+
+    def test_notified_snapshot_checks_expiry_even_for_duplicate_notifications(self):
+        self.start()
+        token = self.tokens[0]
+        initial = "2027-01-01T00:00:00.000000+00:00"
+        expires = "2027-01-01T00:00:01.000000+00:00"
+        with self.core.transaction() as db:
+            db.execute("UPDATE sessions SET expires_at=? WHERE account_id=?", (expires, self.account_ids[0]))
+        with patch("roly.auction_state.now", return_value=initial):
+            previous = self.read(tokens=(token,))
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                if changed:
+                    self.bid(1, 5)
+                clock, batches = [initial], []
+                def finish():
+                    clock[0] = expires
+                facade = SimpleNamespace(is_postgres=True, db_path=self.core.db_path,
+                    connect=lambda: BatchedSQLite(self.core.connect(), batches, on_close=finish))
+                with patch("roly.auction_state.now", side_effect=lambda: clock[0]):
+                    result = read_snapshot(LiveAuction(facade, self.comp), self.event, (token,),
+                        base_state=previous["state"], base_version=previous, changed_hint=True)
+                self.assertEqual(len(batches), 1)
+                self.assertEqual(result["changed"], changed)
+                self.assertIsNone(result["actors"][token])
+                if not changed:
+                    self.assertIsNone(result["state"])
+
+    def test_notified_hot_state_keeps_one_sql_snapshot_and_reloads_raced_details(self):
+        self.start()
+        previous = self.read()
+        self.bid(0, 5)
+        committed = [False]
+        batches = []
+
+        def write_after_actor():
+            if committed[0]:
+                return
+            committed[0] = True
+            self.cache(self.pool[0])
+            self.bid(1, 10)
+            with self.core.transaction() as db:
+                db.execute("UPDATE accounts SET active=0 WHERE id=?", (self.account_ids[0],))
+
+        facade = SimpleNamespace(is_postgres=True, db_path=self.core.db_path,
+            connect=lambda: BatchedSQLite(self.core.connect(), batches, write_after_actor))
+        live = LiveAuction(facade, self.comp)
+        during = read_snapshot(live, self.event, self.tokens, base_state=previous["state"],
+                               base_version=previous, changed_hint=True)
+        self.assertEqual(len(batches), 1)
+        self.assertFalse(during["details_changed"])
+        self.assertEqual(during["state"]["current_lot"]["highest_bid"], 5)
+        self.assertEqual(during["state"]["current_lot"]["riot_profile"], previous["state"]["current_lot"]["riot_profile"])
+        self.assertIsNotNone(during["actors"][self.tokens[0]])
+        batches.clear()
+        after = read_snapshot(live, self.event, self.tokens, base_state=during["state"],
+                              base_version=during, changed_hint=True)
+        self.assertEqual(len(batches), 2)  # Discard incompatible hot rows, then a complete snapshot.
+        self.assertTrue(after["details_changed"])
+        self.assertGreater(after["revision"], during["revision"])
+        self.assertEqual(after["state"]["current_lot"]["highest_bid"], 10)
+        self.assertEqual(after["state"]["current_lot"]["riot_profile"]["flex_lp"], 45)
+        self.assertIsNone(after["actors"][self.tokens[0]])
+
     def test_session_expiring_during_checkout_close_or_projection_is_rejected_on_read_completion(self):
         self.start()
         token = self.tokens[0]

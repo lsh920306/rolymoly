@@ -47,6 +47,7 @@ class LiveAuction:
         self.competition = competition
         self._clock = clock or time.time
         self._injected_clock = clock is not None
+        self._worker_scan = threading.local()
         if core.is_postgres:
             return
         with closing(core.connect()) as db:
@@ -109,9 +110,23 @@ class LiveAuction:
             return row["status"] if row else None
 
     def _log(self, db, event_id, kind, detail, timestamp, actor=None, lot_id=None):
-        db.execute("INSERT INTO live_events(event_id,lot_id,actor_id,type,detail,created_at) VALUES(?,?,?,?,?,?)",
-                   (event_id, lot_id, actor["id"] if actor else None, kind,
-                    json.dumps(detail, ensure_ascii=False), _iso(timestamp)))
+        db.execute(*self._log_statement(event_id, kind, detail, timestamp, actor, lot_id))
+
+    @staticmethod
+    def _log_statement(event_id, kind, detail, timestamp, actor=None, lot_id=None):
+        return ("INSERT INTO live_events(event_id,lot_id,actor_id,type,detail,created_at) VALUES(?,?,?,?,?,?)",
+                (event_id, lot_id, actor["id"] if actor else None, kind,
+                 json.dumps(detail, ensure_ascii=False), _iso(timestamp)))
+
+    @staticmethod
+    def _write_statements(db, statements):
+        """Queue dependent writes in order; the outer transaction owns COMMIT."""
+        batch = getattr(db, "execute_batch", None)
+        if callable(batch):
+            batch(statements)
+        else:
+            for query, parameters in statements:
+                db.execute(query, parameters)
 
     def configure(self, token, event_id, bid_seconds=DEFAULT_BID_SECONDS, reset_on_bid=True, order=None, team_budgets=None, *, expected_settings=None):
         bid_seconds = integer(bid_seconds, "입찰 시간")
@@ -199,10 +214,12 @@ class LiveAuction:
         if not lot:
             return False
         seconds = _effective_bid_seconds(session["bid_seconds"])
-        db.execute("UPDATE live_lots SET status='OPEN',opened_at=?,closes_at=? WHERE id=?", (stamp, stamp + seconds, lot["id"]))
-        db.execute("UPDATE live_sessions SET status='RUNNING',current_lot_id=?,next_at=NULL,bid_seconds=?,transition_seconds=?,updated_at=? WHERE event_id=?", (lot["id"], seconds, TRANSITION_SECONDS, _iso(stamp), event_id))
-        db.execute("UPDATE competition_events SET current_player_id=? WHERE id=?", (lot["member_id"], event_id))
-        self._log(db, event_id, "LOT_OPEN", {"member_id": lot["member_id"], "attempt": lot["attempt"]}, stamp, lot_id=lot["id"])
+        self._write_statements(db, [
+            ("UPDATE live_lots SET status='OPEN',opened_at=?,closes_at=? WHERE id=?", (stamp, stamp + seconds, lot["id"])),
+            ("UPDATE live_sessions SET status='RUNNING',current_lot_id=?,next_at=NULL,bid_seconds=?,transition_seconds=?,updated_at=? WHERE event_id=?", (lot["id"], seconds, TRANSITION_SECONDS, _iso(stamp), event_id)),
+            ("UPDATE competition_events SET current_player_id=? WHERE id=?", (lot["member_id"], event_id)),
+            self._log_statement(event_id, "LOT_OPEN", {"member_id": lot["member_id"], "attempt": lot["attempt"]}, stamp, lot_id=lot["id"]),
+        ])
         return True
 
     def start(self, token, event_id, *, return_state=True):
@@ -444,39 +461,59 @@ class LiveAuction:
         if not remaining:
             counts = [r[0] for r in db.execute("SELECT COUNT(p.id) FROM competition_teams t LEFT JOIN competition_players p ON p.team_id=t.id AND p.participation_status='SELECTED' WHERE t.event_id=? GROUP BY t.id", (event_id,))]
             if counts and all(count == 5 for count in counts):
-                db.execute("UPDATE live_sessions SET status='COMPLETED',next_at=NULL,updated_at=? WHERE event_id=?", (_iso(stamp), event_id))
-                db.execute("UPDATE competition_events SET status='BRACKET_SETUP',current_player_id=NULL WHERE id=?", (event_id,))
-                self._log(db, event_id, "COMPLETED", {"next_stage": "BRACKET_SETUP"}, stamp)
+                self._write_statements(db, [
+                    ("UPDATE live_sessions SET status='COMPLETED',next_at=NULL,updated_at=? WHERE event_id=?", (_iso(stamp), event_id)),
+                    ("UPDATE competition_events SET status='BRACKET_SETUP',current_player_id=NULL WHERE id=?", (event_id,)),
+                    self._log_statement(event_id, "COMPLETED", {"next_stage": "BRACKET_SETUP"}, stamp),
+                ])
                 return
         queued = db.execute("SELECT 1 FROM live_lots WHERE event_id=? AND status='QUEUED'", (event_id,)).fetchone()
-        db.execute("UPDATE live_sessions SET status='WAITING',next_at=?,updated_at=? WHERE event_id=?", (stamp + TRANSITION_SECONDS if queued else None, _iso(stamp), event_id))
-        db.execute("UPDATE competition_events SET current_player_id=NULL WHERE id=?", (event_id,))
+        self._write_statements(db, [
+            ("UPDATE live_sessions SET status='WAITING',next_at=?,updated_at=? WHERE event_id=?", (stamp + TRANSITION_SECONDS if queued else None, _iso(stamp), event_id)),
+            ("UPDATE competition_events SET current_player_id=NULL WHERE id=?", (event_id,)),
+        ])
 
-    def _close_lot(self, db, session, stamp):
-        lot = db.execute("SELECT * FROM live_lots WHERE id=? AND status='OPEN'", (session["current_lot_id"],)).fetchone()
-        if not lot:
+    def _close_lot(self, db, session, stamp, *, lot=None):
+        lot = lot if lot is not None else db.execute("SELECT * FROM live_lots WHERE id=? AND status='OPEN'", (session["current_lot_id"],)).fetchone()
+        if not lot or lot["status"] != "OPEN":
             raise ValueError("진행 중인 경매 기록이 일치하지 않습니다.")
         event_id = session["event_id"]
-        sold, failure = False, None
+        sold, failure, writes = False, None, []
         if lot["highest_team_id"] is not None:
             try:
-                team = self.competition._team(db, event_id, lot["highest_team_id"])
-                player = self.competition._player(db, event_id, lot["member_id"])
-                captain = self.competition._player(db, event_id, team["captain_id"])
+                statements = [
+                    ("SELECT * FROM competition_teams WHERE event_id=? AND id=?", (event_id, lot["highest_team_id"])),
+                    ("""SELECT p.*,m.status AS member_status FROM competition_players p
+                        JOIN members m ON m.id=p.member_id WHERE p.event_id=? AND
+                        (p.member_id=? OR p.member_id=(SELECT captain_id FROM competition_teams WHERE event_id=? AND id=?))""",
+                        (event_id, lot["member_id"], event_id, lot["highest_team_id"])),
+                    ("SELECT price FROM competition_players WHERE team_id=? AND member_id<>?", (lot["highest_team_id"], lot["member_id"])),
+                ]
+                batch = getattr(db, "fetch_batches", None)
+                teams, players, totals = batch(statements) if callable(batch) else [db.execute(query, parameters).fetchall() for query, parameters in statements]
+                if not teams:
+                    raise ValueError("해당 대회의 팀을 선택해 주세요.")
+                team = dict(teams[0])
+                players = {row["member_id"]: dict(row) for row in players}
+                player, captain = players.get(lot["member_id"]), players.get(team["captain_id"])
+                if player is None or captain is None:
+                    raise ValueError("대회 참가자를 찾을 수 없습니다.")
                 if player["team_id"] is not None or player["participation_status"] != "SELECTED" or captain["participation_status"] != "SELECTED" or captain["team_id"] != team["id"]:
                     raise ValueError("선수 또는 팀장의 참가 상태가 변경되었습니다.")
-                if any(self.core.get_member(mid, db)["status"] != "APPROVED" for mid in (player["member_id"], captain["member_id"])):
+                if player["member_status"] != "APPROVED" or captain["member_status"] != "APPROVED":
                     raise ValueError("선수 또는 팀장의 회원 승인이 해제되었습니다.")
-                self._capacity(db, team, lot["highest_bid"])
-                self.competition._assign(db, event_id, lot["member_id"], team["id"], lot["highest_bid"])
+                count, spent = len(totals), sum(row["price"] for row in totals)
+                self._check_capacity(team, lot["highest_bid"], count, spent)
+                writes = self.competition._assignment_statements(team, player, lot["highest_bid"], count, spent)
                 sold = True
             except ValueError as exc:
                 failure = str(exc)
         state = "SOLD" if sold else "UNSOLD"
-        db.execute("UPDATE live_lots SET status=?,closed_at=? WHERE id=?", (state, stamp, lot["id"]))
+        writes.append(("UPDATE live_lots SET status=?,closed_at=? WHERE id=?", (state, stamp, lot["id"])))
         if not sold:
-            db.execute("UPDATE competition_players SET state='UNSOLD' WHERE event_id=? AND member_id=? AND team_id IS NULL", (event_id, lot["member_id"]))
-        self._log(db, event_id, state, {"member_id": lot["member_id"], "team_id": lot["highest_team_id"] if sold else None, "amount": lot["highest_bid"] if sold else None, "reason": failure}, stamp, lot_id=lot["id"])
+            writes.append(("UPDATE competition_players SET state='UNSOLD' WHERE event_id=? AND member_id=? AND team_id IS NULL", (event_id, lot["member_id"])))
+        writes.append(self._log_statement(event_id, state, {"member_id": lot["member_id"], "team_id": lot["highest_team_id"] if sold else None, "amount": lot["highest_bid"] if sold else None, "reason": failure}, stamp, lot_id=lot["id"]))
+        self._write_statements(db, writes)
         self._complete_or_wait(db, session, stamp)
 
     def _advance(self, db, session, stamp):
@@ -489,17 +526,16 @@ class LiveAuction:
         if event["status"] != "AUCTION":
             return False
         if session["status"] == "RUNNING":
-            lot = db.execute("SELECT closes_at FROM live_lots WHERE id=?", (session["current_lot_id"],)).fetchone()
+            lot = db.execute("SELECT * FROM live_lots WHERE id=?", (session["current_lot_id"],)).fetchone()
             if lot and lot["closes_at"] <= stamp:
-                self._close_lot(db, session, stamp)
+                self._close_lot(db, session, stamp, lot=lot)
                 return True
         elif session["status"] == "WAITING" and session["next_at"] is not None and session["next_at"] <= stamp:
             return self._open_next(db, session, stamp)
         return False
 
     def _worker_read(self, query, parameters=None):
-        # Two independent lifecycle reads retain their existing ordering. Each
-        # owns one short read-only pipeline instead of BEGIN/SELECT/close trips.
+        # Own one short read-only pipeline rather than BEGIN/SELECT/close trips.
         if self.core.is_postgres:
             with closing(self.core.connect()) as db:
                 return db.fetch_snapshot_batches([(query, parameters)])[0]
@@ -508,30 +544,52 @@ class LiveAuction:
 
     def _due_candidates(self):
         """Skip idle writer transactions; these IDs are hints, never authority."""
+        # Include READY/PAUSED sessions without deadlines so this same snapshot
+        # also answers whether a nonpersistent worker may retire.
+        query = """SELECT s.event_id,s.status,e.status AS event_status,l.closes_at,s.next_at
+            FROM live_sessions s JOIN competition_events e ON e.id=s.event_id
+            LEFT JOIN live_lots l ON l.id=s.current_lot_id AND l.event_id=s.event_id
+            WHERE s.status IN ('READY','RUNNING','WAITING','PAUSED')"""
         if self.core.is_postgres:
-            statements = [("""SELECT s.event_id,s.status,e.status AS event_status,l.closes_at,s.next_at
-                FROM live_sessions s JOIN competition_events e ON e.id=s.event_id
-                LEFT JOIN live_lots l ON l.id=s.current_lot_id AND l.event_id=s.event_id
-                WHERE s.status IN ('READY','RUNNING','WAITING','PAUSED') AND (
-                    e.status='CANCELLED' OR (e.status='AUCTION' AND (
-                        (s.status='RUNNING' AND l.closes_at IS NOT NULL) OR
-                        (s.status='WAITING' AND s.next_at IS NOT NULL))))""", None)]
+            statements = [(query, None)]
             if not self._injected_clock:
                 statements.append(("SELECT EXTRACT(EPOCH FROM pg_catalog.clock_timestamp())::double precision", None))
             with closing(self.core.connect()) as db:
                 batches = db.fetch_snapshot_batches(statements)
+                received = time.monotonic()
             stamp = self._clock() if self._injected_clock else float(batches[1][0][0])
-            return [row["event_id"] for row in batches[0] if row["event_status"] == "CANCELLED"
-                    or (row["status"] == "RUNNING" and row["closes_at"] <= stamp)
-                    or (row["status"] == "WAITING" and row["next_at"] <= stamp)]
-        return [row[0] for row in self._worker_read("""SELECT s.event_id
-                FROM live_sessions s JOIN competition_events e ON e.id=s.event_id
-                LEFT JOIN live_lots l ON l.id=s.current_lot_id AND l.event_id=s.event_id
-                CROSS JOIN (SELECT ? AS stamp) c
-                WHERE s.status IN ('READY','RUNNING','WAITING','PAUSED') AND (
-                    e.status='CANCELLED' OR (e.status='AUCTION' AND (
-                        (s.status='RUNNING' AND l.closes_at<=c.stamp) OR
-                        (s.status='WAITING' AND s.next_at<=c.stamp))))""", (self._clock(),))]
+            rows = batches[0]
+        else:
+            rows = self._worker_read(query)
+            stamp, received = self._clock(), time.monotonic()
+        candidates, deadlines = [], []
+        for row in rows:
+            if row["event_status"] == "CANCELLED":
+                candidates.append(row["event_id"])
+            elif row["event_status"] == "AUCTION":
+                deadline = row["closes_at"] if row["status"] == "RUNNING" else row["next_at"] if row["status"] == "WAITING" else None
+                if deadline is not None:
+                    if deadline <= stamp:
+                        candidates.append(row["event_id"])
+                    else:
+                        deadlines.append(received + deadline - stamp)
+        # Thread-local: foreground pause/settle calls cannot overwrite the
+        # background worker's lifecycle snapshot or its monotonic alarm.
+        self._worker_scan.result = {"active": bool(rows), "next_check": min(deadlines) if deadlines else None}
+        return candidates
+
+    def _worker_delay(self, interval):
+        scan = getattr(self._worker_scan, "result", None)
+        next_check = scan["next_check"] if scan else None
+        return interval if next_check is None else min(interval, max(0, next_check - time.monotonic()))
+
+    def wake_worker(self):
+        """Coalesce a committed-change hint; never settle on the notifying thread."""
+        with self._worker_lock:
+            worker = self._workers.get(self.core.db_path)
+            if worker:
+                worker["generation"] += 1
+                worker["wake"].set()
 
     def settle_due(self):
         """Apply only server-determined deadlines; callers cannot select a winner."""
@@ -1047,22 +1105,28 @@ class LiveAuction:
             if existing and existing["thread"].is_alive() and not existing["stop"].is_set():
                 existing["persistent"] |= persistent
                 existing["generation"] += 1
+                existing["wake"].set()
                 return existing["thread"]
             stop = threading.Event()
-            state = {"stop": stop, "error": None, "persistent": persistent, "generation": 0}
+            wake = threading.Event()
+            state = {"stop": stop, "wake": wake, "error": None, "persistent": persistent, "generation": 0}
 
             def work():
                 try:
                     while not stop.is_set():
+                        wake.clear()
                         try:
-                            self.settle_due()
-                            state["error"] = None
                             with self._worker_lock:
                                 generation = state["generation"]
+                            self._worker_scan.result = None
+                            self.settle_due()
+                            state["error"] = None
                             # Do not retain a polling thread for every discarded
                             # demo DB. READY, paused and unsold sessions still
                             # need a worker; the launcher explicitly stays on.
-                            if not state["persistent"] and not self.has_active_sessions():
+                            scan = self._worker_scan.result
+                            active = scan["active"] if scan is not None else self.has_active_sessions()
+                            if not state["persistent"] and not active:
                                 with self._worker_lock:
                                     # An ensure call during the read must get a
                                     # further check instead of a retiring worker.
@@ -1073,7 +1137,14 @@ class LiveAuction:
                         except Exception as exc:
                             state["error"] = str(exc)
                             _LOG.exception("Live auction deadline processing failed")
-                        stop.wait(interval)
+                        # Never lengthen the recovery interval. A nearer known
+                        # deadline shortens it; notifications share one wake.
+                        # The tiny coalescing window absorbs bursts while still
+                        # fitting inside the previous interval wait budget.
+                        delay = self._worker_delay(interval)
+                        wake.wait(max(0, delay - min(.01, interval)))
+                        if stop.wait(min(.01, interval, self._worker_delay(interval))):
+                            break
                 finally:
                     with self._worker_lock:
                         if self._workers.get(self.core.db_path) is state:
@@ -1091,6 +1162,7 @@ class LiveAuction:
             if not worker:
                 return
             worker["stop"].set()
+            worker["wake"].set()
         worker["thread"].join(timeout=16)
         with self._worker_lock:
             if not worker["thread"].is_alive() and self._workers.get(self.core.db_path) is worker:

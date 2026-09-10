@@ -167,7 +167,8 @@ export default function({parentElement, data}) {
   const staticView=['overview','team','queue','remaining','history'].includes(data?.kind);
   const staticSignature=staticView ? JSON.stringify(data) : null;
   if(staticView && root.dataset.staticSignature===staticSignature)return root._rolyStaticCleanup;
-  if(staticView)root._rolyStaticCleanup?.();
+  root._rolyStaticCleanup?.();
+  if(!staticView){delete root.dataset.staticSignature;root._rolyStaticCleanup=null;}
   const remember=(node,extra=()=>{})=>{
     root.replaceChildren(node);root.dataset.staticSignature=staticSignature;
     const cleanup=()=>{cleanImages();extra();};root._rolyStaticCleanup=cleanup;return cleanup;
@@ -408,16 +409,21 @@ export default function({parentElement, data}) {
     panel.append(targetProfile(data.player));
     panel._rolyCleanImages=cleanImages;
   }
-  const timer = make('div', 'timer');
-  const content = make('div', 'timer-content');
-  const current = make('div', 'person-text');
-  current.append(make('div', 'bidder', data.bidder), make('div', 'bid-price', data.price));
-  const clock = make('div', 'clock');
-  const digits = make('div', 'seconds');
-  clock.append(make('div', 'muted', data.clock_label), digits);
-  content.append(current, clock);
-  const bar = make('div', 'bar'); const fill = make('div', 'fill'); bar.append(fill);
-  timer.append(content, bar);root.replaceChildren(panel,timer);
+  let timer=root.querySelector('.timer');
+  if(!timer){
+    timer=make('div','timer');const content=make('div','timer-content'),current=make('div','person-text');
+    current.append(make('div','bidder'),make('div','bid-price'));
+    const clock=make('div','clock');clock.append(make('div','muted clock-label'),make('div','seconds'));
+    content.append(current,clock);const bar=make('div','bar');bar.append(make('div','fill'));
+    timer.append(content,bar);root.replaceChildren(panel,timer);
+  }else if(previousPanel!==panel){
+    if(previousPanel)previousPanel.replaceWith(panel);else root.replaceChildren(panel,timer);
+  }
+  const write=(node,value)=>{const text=String(value ?? '');if(node.textContent!==text)node.textContent=text;};
+  write(timer.querySelector('.bidder'),data.bidder);write(timer.querySelector('.bid-price'),data.price);
+  write(timer.querySelector('.clock-label'),data.clock_label);
+  const digits=timer.querySelector('.seconds'),fill=timer.querySelector('.fill');
+  const generation=memory.generation=(memory.generation || 0)+1;
   const received=performance.now();
   const clockKey=JSON.stringify([data.event_id,data.lot_id,data.deadline,data.phase]);
   let startingSeconds=Math.max(0,Number(data.seconds || 0));
@@ -431,12 +437,15 @@ export default function({parentElement, data}) {
   const draw=()=>{
     const elapsed=data.ticking ? Math.max(0,(performance.now()-received)/1000) : 0;
     const seconds=Math.max(0,startingSeconds-elapsed);
-    digits.textContent=data.show_clock ? Math.ceil(seconds)+'초' : data.clock_text;
-    fill.style.width=(Math.min(1,seconds/Math.max(1,data.scale))*100)+'%';
+    write(digits,data.show_clock ? Math.ceil(seconds)+'초' : data.clock_text);
+    const width=(Math.min(1,seconds/Math.max(1,data.scale))*100)+'%';
+    if(fill.style.width!==width)fill.style.width=width;
   };
   draw(); const interval=data.ticking?setInterval(draw,100):null;memory.interval=interval;
   return ()=>{
-    panel._rolyCleanImages?.();
+    // Cleanup precedes same-node rerenders; keep image error handlers while
+    // that profile remains mounted, and release only the last generation.
+    queueMicrotask(()=>{if(memory.generation===generation)panel._rolyCleanImages?.();});
     clearInterval(interval);
     if (memory.interval === interval) memory.interval=null;
   };
@@ -461,21 +470,42 @@ export default function({parentElement,data}) {
     const root=parentElement.querySelector('.auction-component');
     if(root){root.replaceChildren();delete root.dataset.staticSignature;}
   };
+  const connection=()=>{
+    if(!context)return;
+    const state=view._rolyAuctionViewMeta?.get(context);
+    const root=parentElement.querySelector('.auction-component');if(!root)return;
+    const mismatch=data.live_epoch && state?.epoch!==data.live_epoch;
+    const status=mismatch?'connecting':state?.connection || 'connecting';root.dataset.liveConnection=status;
+    if(mismatch || ['stopped','unavailable'].includes(status))clear();
+    if(data.kind!=='overview')return;
+    let note=root.querySelector('.auction-connection');
+    if(!note){note=root.ownerDocument.createElement('p');note.className='muted auction-connection';note.setAttribute('role','status');root.append(note);}
+    const message={live:'',connecting:'최신 팀 현황을 확인하고 있습니다.',stale:'연결 확인 중 · 마지막으로 확인된 현황입니다.',
+      stopped:'로그인 또는 경매 연결이 변경되었습니다. 화면을 새로고침해 주세요.',unavailable:'경매 정보를 확인할 수 없습니다.'}[status] || '';
+    if(note.textContent!==message)note.textContent=message;note.hidden=!message;
+  };
   if(context && view._rolyAuctionViews?.has(context) && view._rolyAuctionViews.get(context)===null)clear();
   else cleanup=renderAuctionView({parentElement,data:cached || data});
+  connection();
   if(!context)return cleanup;
   let disposed=false;
   const update=event=>{
     if(disposed || !parentElement.isConnected || event.detail?.context!==context)return;
-    if(event.detail.views===null){clear();return;}
+    if(event.detail.views===null){clear();connection();return;}
     const next=select(event.detail.views);
     if(next)cleanup=renderAuctionView({parentElement,data:next});
+    else if(event.detail.views && Object.hasOwn(event.detail.views,data.kind) && event.detail.views[data.kind]===null)clear();
+    connection();
   };
   view.addEventListener('roly-auction-frame',update);
   const dispose=()=>{
     if(disposed)return;disposed=true;
-    view.removeEventListener('roly-auction-frame',update);cleanup?.();
-    if(parentElement._rolyLiveViewDispose===dispose)parentElement._rolyLiveViewDispose=null;
+    view.removeEventListener('roly-auction-frame',update);
+    // Streamlit disposes immediately before a synchronous remount. Preserve
+    // unchanged images/resize ownership until that replacement takes over.
+    queueMicrotask(()=>{if(parentElement._rolyLiveViewDispose===dispose){
+      cleanup?.();parentElement._rolyLiveViewDispose=null;
+    }});
   };
   parentElement._rolyLiveViewDispose=dispose;
   return dispose;
@@ -631,12 +661,13 @@ def render_sound(state, key, *, live_context=None):
     _renderer()(data={"kind": "sound", "event_id": event_id, "bid_id": bid_id, **({"live_context": live_context} if live_context else {})}, key=key, height="content", width=200)
 
 
-def render_overview(teams, key, *, member_id=None, live_context=None):
+def render_overview(teams, key, *, member_id=None, live_context=None, live_epoch=None):
     teams = teams["teams"] if isinstance(teams, dict) else teams
     cards = [team_data(team, member_id=member_id, index=index) for index, team in enumerate(teams)]
     with st.container(key="live_overview_panel" if len(cards) <= 4 else "live_overview_panel_many"):
         st.caption("팀별 포인트와 포지션 배정 현황을 한눈에 확인하세요.")
-        _renderer()(data={"kind": "overview", "teams": cards, **({"live_context": live_context} if live_context else {})}, key=key, height="content", width="stretch")
+        _renderer()(data={"kind": "overview", "teams": cards, **({"live_context": live_context} if live_context else {}),
+                          **({"live_epoch": live_epoch} if live_epoch else {})}, key=key, height="content", width="stretch")
 
 
 def _latest_lots(state):

@@ -114,9 +114,9 @@ class PostgresAdapterTests(unittest.TestCase):
                 return result
         return MigrationDriver()
 
-    def test_fresh_and_v7_migrations_install_change_tracking_before_final_version(self):
+    def test_fresh_v7_and_v8_migrations_install_change_tracking_before_final_version(self):
         from roly import postgres
-        for version in (0, 7):
+        for version in (0, 7, 8):
             with self.subTest(version=version):
                 raw = self.migration_driver(version)
                 database = PostgresConnection("rolymoly", raw)
@@ -132,12 +132,12 @@ class PostgresAdapterTests(unittest.TestCase):
                 self.assertTrue(any(query.startswith("CREATE TRIGGER auction_change") for query in statements))
                 versions = [parameters[0] for query, parameters in raw.calls
                             if query.startswith("INSERT INTO _schema_migrations(version,applied_at) VALUES(%s")]
-                self.assertEqual(versions, [8])
+                self.assertEqual(versions, [9])
                 self.assertEqual(raw.calls[-1], ("COMMIT", None))
 
     def test_change_tracking_migration_failure_rolls_back_without_version_advance(self):
         from roly import postgres
-        raw = self.migration_driver(7)
+        raw = self.migration_driver(8)
         raw.fail_on = "CREATE TRIGGER auction_change"
         database = PostgresConnection("rolymoly", raw)
         with patch.object(postgres, "connect", return_value=database), \

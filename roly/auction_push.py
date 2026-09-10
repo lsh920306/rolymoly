@@ -76,11 +76,15 @@ class Room:
     live: object
     members: dict = field(default_factory=dict)
     wake: asyncio.Event = field(default_factory=asyncio.Event)
+    change_pending: bool = False
+    probe_pending: bool = False
+    reading: bool = False
     task: object = None
     state: object = None
     version: object = None
     revision: int = -1
     detail_revision: int = -1
+    display_revision: int | None = None
     views: dict = field(default_factory=dict)
     clock: float | None = None
     clock_at: float = 0
@@ -99,7 +103,7 @@ class AuctionHub:
         self.closed = False
         self.listener = None
         self.listen = listen
-        self.stats = {"reads": 0, "full_states": 0, "hot_states": 0, "frames": 0}
+        self.stats = {"reads": 0, "full_states": 0, "allocation_states": 0, "hot_states": 0, "frames": 0}
 
     async def subscribe(self, token, event_id, envelope):
         from .auction_http import TransportError
@@ -146,7 +150,15 @@ class AuctionHub:
             return
         for room in self.rooms.values():
             if event_id in (None, 0, room.event_id):
+                room.change_pending = True
+                # A local wake and its committed PG NOTIFY may straddle the
+                # same read. Keep the following pass, but start with a cheap
+                # version/auth probe instead of fetching duplicate hot rows.
+                room.probe_pending |= room.reading
                 room.wake.set()
+                wake_worker = getattr(room.live, "wake_worker", None)
+                if wake_worker:
+                    wake_worker()
 
     async def snapshot(self, token, event_id, envelope):
         room, subscriber = await self.subscribe(token, event_id, envelope)
@@ -161,10 +173,10 @@ class AuctionHub:
         finally:
             self.unsubscribe(room, subscriber)
 
-    def _read(self, room, tokens):
-        from .auction_state import read_snapshot
-        return (self.reader or read_snapshot)(room.live, room.event_id, tokens,
-            base_state=room.state, base_version=room.version)
+    def _read(self, room, tokens, changed_hint):
+        from .auction_shared import shared_snapshot
+        return (self.reader or shared_snapshot)(room.live, room.event_id, tokens,
+            base_state=room.state, base_version=room.version, changed_hint=changed_hint)
 
     @staticmethod
     def _fresh_state(room):
@@ -198,30 +210,48 @@ class AuctionHub:
                         break
                 members = list(room.members.values())
                 tokens = tuple(dict.fromkeys(member.token for member in members))
+                # Consume only the notifications coalesced before this read.
+                # All three operations run on the event loop without an await;
+                # a notification during the read must wake the following pass.
+                changed_hint = room.change_pending and not room.probe_pending
+                room.change_pending = False
+                room.probe_pending = False
+                room.wake.clear()
                 try:
-                    result = await to_thread.run_sync(partial(self._read, room, tokens), limiter=self.runtime.read_limiter)
+                    room.reading = True
+                    try:
+                        result = await to_thread.run_sync(partial(self._read, room, tokens, changed_hint), limiter=self.runtime.read_limiter)
+                    finally:
+                        room.reading = False
                     self.stats["reads"] += 1
                     room.verified_at = monotonic()
                     room.clock_at = result.get("sampled_at", room.verified_at)
                     room.clock = float(result["server_now"])
                     changed = result["revision"] != room.revision
                     details = result["detail_revision"] != room.detail_revision
+                    display = result.get("display_revision") != room.display_revision
                     room.revision, room.detail_revision = result["revision"], result["detail_revision"]
-                    room.version = {"revision": room.revision, "detail_revision": room.detail_revision}
+                    room.display_revision = result.get("display_revision")
+                    room.version = {"revision": room.revision, "detail_revision": room.detail_revision,
+                                    "display_revision": room.display_revision}
                     if result.get("state") is not None:
                         room.state = result["state"]
                     elif result.get("changed") and result.get("state") is None:
                         room.state = None
                         room.views = {}
+                    changed_views = {}
                     if room.state and (details or not room.views):
                         from .auction_components import live_companion_data
-                        room.views = live_companion_data(room.state, {})
-                        self.stats["full_states"] += 1
+                        views = live_companion_data(room.state, {})
+                        changed_views = {key: value for key, value in views.items() if room.views.get(key) != value}
+                        self.stats["full_states" if display or not room.views else "allocation_states"] += 1
+                        room.views = views
                     elif changed and room.state:
                         # Metadata is shared; only bid history and sound change
                         # on an ordinary bid. Formatting happens once per room.
                         from .auction_components import bid_history_data
-                        room.views.update(bid_history_data(room.state))
+                        changed_views = bid_history_data(room.state)
+                        room.views.update(changed_views)
                         self.stats["hot_states"] += 1
                     if room.state and room.state["status"] in ("RUNNING", "WAITING", "PAUSED"):
                         room.live.ensure_worker()
@@ -240,8 +270,7 @@ class AuctionHub:
                         initial = first or (actor_changed and not changed)
                         if not (first or changed or actor_changed):
                             continue
-                        views = room.views if first or details or actor_changed else {
-                            key: room.views[key] for key in ("history", "sound") if key in room.views}
+                        views = room.views if first or actor_changed else changed_views
                         views = self._personal_views(views, state, actor)
                         panel = presentation(state, actor, member.context, request=member.request if initial else None,
                             elapsed_ms=max(0, (monotonic()-member.joined)*1000) if initial else 0, views=views)
@@ -299,8 +328,7 @@ async def websocket_endpoint(socket):
         http._check_origin(socket)
         if socket.scope.get("query_string"):
             raise http.TransportError("invalid_connection", "경매 연결 주소를 확인해 주세요.")
-        with http._runtime_lock:
-            runtime = http._runtime
+        runtime = http.get_runtime()
         if runtime is None or getattr(runtime, "push", None) is None:
             await socket.close(code=1013)
             return

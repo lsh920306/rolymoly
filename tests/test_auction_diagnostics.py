@@ -66,6 +66,10 @@ assert.equal(ack.server_elapsed_ms,70);assert.equal(ack.callback_elapsed_ms,60);
 assert.equal(ack.request_id,bidding.command.request_id);
 const raw=JSON.stringify(events());
 for(const secret of ['test-token-with-at-least-twenty-characters','account-event','private-extra','secret-as-string','password','login-key','server-one'])assert.ok(!raw.includes(secret),secret);
+const metadata=root.querySelector('.auction-diagnostics').dataset;
+assert.equal(metadata.serverEpoch,'server-one');assert.equal(metadata.eventId,'3');
+const metadataRaw=JSON.stringify(metadata);
+for(const secret of ['test-token-with-at-least-twenty-characters','account-event','login-key','storage_key','context','token'])assert.ok(!metadataRaw.includes(secret),secret);
 cleanup();
 """)
 

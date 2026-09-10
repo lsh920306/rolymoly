@@ -85,8 +85,9 @@ class AuctionPushTests(unittest.TestCase):
     headers = http_fixtures.AuctionHTTPTests.headers
 
     def run_hub(self, exercise, **options):
+        options.setdefault("scan_interval", .04)
         async def run():
-            self.runtime.push = hub = AuctionHub(self.runtime, scan_interval=.04, listen=False, **options)
+            self.runtime.push = hub = AuctionHub(self.runtime, listen=False, **options)
             try:
                 await exercise(hub)
             finally:
@@ -197,6 +198,148 @@ class AuctionPushTests(unittest.TestCase):
                 release.set()
             await self.frame(member)
         self.run_hub(exercise, reader=blocked)
+
+    def test_notification_during_inflight_snapshot_survives_for_the_next_read(self):
+        lot = self.start()
+        entered, release = threading.Event(), threading.Event()
+        hints = []
+        def delayed(*args, **kwargs):
+            result = read_snapshot(*args, **kwargs)
+            hints.append(kwargs["changed_hint"])
+            if len(hints) == 2:
+                # The first bid snapshot is already fixed when the next bid
+                # commits and notifies. Clearing a hint after await loses it.
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError("Synthetic snapshot gate timed out")
+            return result
+
+        async def exercise(hub):
+            room, member = await hub.subscribe(self.player_token, self.event, self.envelope(token=self.player_token))
+            await self.frame(member)
+            self.live.place_bid(self.tokens[0], self.event, lot["id"], 5, str(uuid4()))
+            hub.notify(self.event)
+            try:
+                async def wait_for_snapshot():
+                    while not entered.is_set():
+                        await asyncio.sleep(.001)
+                await asyncio.wait_for(wait_for_snapshot(), 2)
+                self.live.place_bid(self.tokens[1], self.event, lot["id"], 10, str(uuid4()))
+                hub.notify(self.event)
+                self.assertTrue(room.change_pending)
+            finally:
+                release.set()
+            frame = await self.frame(member)
+            if frame["panel"]["lot"]["highest_bid"] == 5:
+                frame = await self.frame(member)
+            self.assertEqual(frame["panel"]["lot"]["highest_bid"], 10)
+            # The in-flight wake is preserved; its following read probes first
+            # to distinguish a new bid from the same commit's delayed NOTIFY.
+            self.assertEqual(hints, [False, True, False])
+            self.assertEqual(hub.stats["reads"], 3)
+        self.run_hub(exercise, reader=delayed, scan_interval=60)
+
+    def test_delayed_duplicate_notify_only_probes_and_wakes_existing_deadline_worker(self):
+        from roly import auction_state
+        lot = self.start()
+        entered, release = threading.Event(), threading.Event()
+        hints, statement_counts = [], []
+        batches = auction_state._batches
+        def counted(live, event, tokens, state_statements=()):
+            statement_counts.append(len(state_statements))
+            return batches(live, event, tokens, state_statements)
+        def delayed(*args, **kwargs):
+            result = read_snapshot(*args, **kwargs)
+            hints.append(kwargs["changed_hint"])
+            if len(hints) == 2:
+                entered.set()
+                if not release.wait(3):
+                    raise AssertionError("duplicate notification gate timed out")
+            return result
+        async def exercise(hub):
+            room, member = await hub.subscribe(self.player_token, self.event, self.envelope(token=self.player_token))
+            await self.frame(member)
+            self.live.place_bid(self.tokens[0], self.event, lot["id"], 5, str(uuid4()))
+            with patch.object(self.live, "wake_worker") as wake:
+                hub.notify(self.event)
+                try:
+                    async def wait_for_read():
+                        while not entered.is_set():
+                            await asyncio.sleep(.001)
+                    await asyncio.wait_for(wait_for_read(), 2)
+                    hub.notify(self.event)  # Same commit, delayed delivery; no new write.
+                    self.assertTrue(room.probe_pending)
+                finally:
+                    release.set()
+                await self.frame(member)
+                async def wait_for_probe():
+                    while hub.stats["reads"] < 3:
+                        await asyncio.sleep(.001)
+                await asyncio.wait_for(wait_for_probe(), 2)
+                self.assertEqual(wake.call_count, 2)
+            self.assertTrue(member.queue.empty())
+            self.assertEqual(hints, [False, True, False])
+            self.assertEqual(statement_counts, [7, 4, 0])
+        with patch.object(auction_state, "_batches", side_effect=counted):
+            self.run_hub(exercise, reader=delayed, scan_interval=60)
+
+    def test_duplicate_notifications_coalesce_without_frames_and_joins_keep_the_probe(self):
+        self.start()
+        hints = []
+        def observed(*args, **kwargs):
+            hints.append(kwargs["changed_hint"])
+            return read_snapshot(*args, **kwargs)
+
+        async def exercise(hub):
+            room, member = await hub.subscribe(self.player_token, self.event, self.envelope(token=self.player_token))
+            first = await self.frame(member)
+            hub.notify(self.event + 10000)
+            self.assertFalse(room.change_pending)
+            for event_id in (self.event, self.event, 0, None):
+                hub.notify(event_id)
+            async def wait_for_read():
+                while hub.stats["reads"] < 2:
+                    await asyncio.sleep(.001)
+            await asyncio.wait_for(wait_for_read(), 2)
+            self.assertTrue(member.queue.empty())
+            self.assertFalse(room.change_pending)
+            self.assertFalse(room.wake.is_set())
+            _, joined = await hub.subscribe(self.player_token, self.event, self.envelope(token=self.player_token))
+            restored = await self.frame(joined)
+            self.assertEqual(restored["type"], "snapshot")
+            self.assertEqual(restored["revision"], first["revision"])
+            self.assertTrue(member.queue.empty())
+            self.assertEqual(hints, [False, True, False])
+        self.run_hub(exercise, reader=observed, scan_interval=60)
+
+    def test_failed_notification_read_recovers_on_default_periodic_probe_without_another_wake(self):
+        lot = self.start()
+        hints = []
+        def fail_once(*args, **kwargs):
+            hints.append(kwargs["changed_hint"])
+            if len(hints) == 2:
+                raise RuntimeError("Synthetic read failure after notification")
+            return read_snapshot(*args, **kwargs)
+
+        async def run():
+            self.runtime.push = hub = AuctionHub(self.runtime, reader=fail_once, listen=False)
+            try:
+                self.assertEqual(hub.scan_interval, 1.0)
+                room, member = await hub.subscribe(self.player_token, self.event, self.envelope(token=self.player_token))
+                first = await self.frame(member)
+                self.live.place_bid(self.tokens[0], self.event, lot["id"], 5, str(uuid4()))
+                hub.notify(self.event)
+                failed = await self.frame(member)
+                self.assertEqual(failed["error"]["code"], "transport_uncertain")
+                self.assertIsNone(hub.pong(room, member, 1))
+                repaired = await self.frame(member)  # No next NOTIFY; default 1s scan repairs the missed read.
+                self.assertEqual(repaired["panel"]["lot"]["highest_bid"], 5)
+                self.assertGreater(repaired["revision"], first["revision"])
+                self.assertEqual(hints, [False, True, False])
+                self.assertIsNotNone(hub.pong(room, member, 2))
+            finally:
+                await hub.close()
+        asyncio.run(run())
 
     def test_capacity_and_shutdown_reject_new_subscriptions(self):
         self.start()

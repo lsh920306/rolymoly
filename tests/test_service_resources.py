@@ -205,6 +205,22 @@ class ServiceResourceTests(unittest.TestCase):
 
 
 class RevisionFingerprintTests(unittest.TestCase):
+    def test_each_shared_display_backend_change_invalidates_service_revision(self):
+        selected = {"auction_state.py", "auction_shared.py", "auction_push.py"}
+        self.assertTrue(selected <= set(resources.BACKEND_FILES))
+        with tempfile.TemporaryDirectory(prefix="roly-shared-revision-") as folder:
+            root = Path(folder)
+            for name in resources.BACKEND_FILES:
+                (root / name).write_text("version = 1\n", encoding="utf-8")
+            state = {"lock": threading.RLock(), "signature": None, "revision": None}
+            with patch.object(resources, "ROOT", root), patch.object(resources, "_registry", return_value=state):
+                previous = resources.backend_revision()
+                for name in sorted(selected):
+                    (root / name).write_text("version = 222\n", encoding="utf-8")
+                    current = resources.backend_revision()
+                    self.assertNotEqual(current, previous)
+                    previous = current
+
     def test_only_source_change_rehashes_files_and_registry_survives_reload(self):
         resources.clear_services()
         with tempfile.TemporaryDirectory(prefix="roly-revision-") as folder:

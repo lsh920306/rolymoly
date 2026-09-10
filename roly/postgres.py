@@ -20,7 +20,7 @@ from time import monotonic
 from .auction_metrics import measure_background, measure_stage
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 POOL_MAX_SIZE = 6
 POOL_TIMEOUT = 5.0
 _pool_lock = threading.Lock()
@@ -787,7 +787,7 @@ def initialize(schema="rolymoly"):
                 raise ValueError("저장소 버전이 앱보다 최신입니다. 앱을 업데이트해 주세요.")
             if version == SCHEMA_VERSION:
                 return
-            if version not in (0, 1, 2, 3, 4, 5, 6, 7):
+            if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8):
                 raise ValueError("지원하지 않는 저장소 마이그레이션 버전입니다.")
             stamp = datetime.now(timezone.utc).isoformat(timespec="microseconds")
             if version == 0:
